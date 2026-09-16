@@ -138,6 +138,7 @@ class HanpaiConstraintContext:
     forbid_isolated_level: bool
     allow_aojiu: bool
     forbid_three_same_ending: bool
+    allowed_end_tones: tuple[str, ...] = ("平", "仄")
 
 
 class HanpaiConstraintProfile:
@@ -282,11 +283,19 @@ class HanpaiConstraintSession(BaseConstraintSession):
             self._locked_rhyme_parts = narrowed
 
     def candidate_context(self, state: GenerationState) -> HanpaiConstraintContext:
+        allowed_end_tones = ("平", "仄")
+        if state.line_index in self._rhyme_lines and self._locked_rhyme_parts is not None:
+            allowed_end_tones = tuple(
+                tone
+                for tone in ("平", "仄")
+                if self._locked_rhyme_parts.get(tone)
+            )
         return HanpaiConstraintContext(
             target_length=self._line_lengths[state.line_index],
             forbid_isolated_level=self._forbid_isolated_level,
             allow_aojiu=self._allow_aojiu,
             forbid_three_same_ending=self._forbid_three_same_ending,
+            allowed_end_tones=allowed_end_tones,
         )
 
 

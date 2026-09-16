@@ -83,3 +83,31 @@ def has_three_same_ending(
         not rule.validate(tones)
         for tones in iter_tone_combinations(text, lexicon)
     )
+
+
+def would_force_three_same_ending(
+    text: str,
+    target_length: int,
+    allowed_end_tones: Iterable[str],
+    lexicon: RhymeLookup,
+    *,
+    reject_ambiguous: bool = False,
+) -> bool:
+    """倒数第二字生成后，判断所有可用末字声调是否都会形成三连同。"""
+    if len(text) != target_length - 1 or len(text) < 2:
+        return False
+
+    end_tones = tuple(dict.fromkeys(allowed_end_tones))
+    if not end_tones:
+        return False
+    third_tones = tuple(lexicon.get_pingze(text[-2]))
+    second_tones = tuple(lexicon.get_pingze(text[-1]))
+    if not third_tones or not second_tones:
+        return False
+
+    def forces_tone(end_tone: str) -> bool:
+        if reject_ambiguous:
+            return end_tone in third_tones and end_tone in second_tones
+        return third_tones == (end_tone,) and second_tones == (end_tone,)
+
+    return all(forces_tone(end_tone) for end_tone in end_tones)

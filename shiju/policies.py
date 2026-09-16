@@ -8,6 +8,7 @@ from .candidates import (
     decode_position_candidate,
     has_three_same_ending,
     iter_tone_combinations,
+    would_force_three_same_ending,
 )
 from .constraints import HanpaiConstraintContext, RelationalConstraintContext
 from .data import RhymeLookup
@@ -115,6 +116,14 @@ class HanpaiVerifierPolicy:
             return None
         simulated = context.state.current_line_text + token_chars
         if len(simulated) > info.target_length:
+            return None
+        if info.forbid_three_same_ending and would_force_three_same_ending(
+            simulated,
+            info.target_length,
+            info.allowed_end_tones,
+            self._lexicon,
+            reject_ambiguous=True,
+        ):
             return None
         if len(simulated) < info.target_length:
             return 0.0
@@ -269,15 +278,15 @@ class TangVerifierPolicy:
         return True
 
     def _check_prevent_three_same(self, line: str, target: int, end_tone: int) -> bool:
-        if len(line) != target - 1 or len(line) < 2 or end_tone == 2:
-            return True
-        third_from_end = line[target - 3]
-        third_tones = self._lexicon.get_pingze(third_from_end)
-        current_tones = self._lexicon.get_pingze(line[-1])
-        if len(third_tones) != 1 or len(current_tones) != 1:
+        if end_tone == 2:
             return True
         expected = "平" if end_tone == 0 else "仄"
-        return not (third_tones[0] == expected and current_tones[0] == expected)
+        return not would_force_three_same_ending(
+            line,
+            target,
+            (expected,),
+            self._lexicon,
+        )
 
     def _check_isolated_level(self, line: str, line_tone: int) -> bool:
         if len(line) < 3:

@@ -2,7 +2,7 @@ import pytest
 import torch
 
 from shiju.constraints import HanpaiConstraintProfile
-from shiju.domain import RhymeMode, StepKind
+from shiju.domain import GenerationLayout, LineLayout, RhymeMode, StepKind
 from shiju.policies import (
     BoundaryCoherencePolicy,
     CandidateContext,
@@ -309,6 +309,135 @@ def test_hanpai_rejects_three_same_tones_at_line_end_when_enabled():
     assert policy.evaluate(20, context) is None
 
 
+@pytest.mark.parametrize(
+    ("candidate", "end_tones", "expected"),
+    [
+        ("夜", ("仄",), None),
+        ("山", ("仄",), 0.0),
+        ("夜", ("平", "仄"), 0.0),
+    ],
+)
+def test_hanpai_prevents_forced_three_same_before_final_character(
+    candidate,
+    end_tones,
+    expected,
+):
+    from shiju.constraints import HanpaiConstraintContext
+
+    tokenizer = FakeTokenizer({20: candidate})
+    lexicon = FakeLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    profile = HanpaiConstraintProfile((5, 7, 5), lexicon)
+    controller = GenerationController(
+        GenerationStateMachine(profile.layout),
+        profile.create_session(),
+    )
+    controller.advance("山雨、月")
+    context = CandidateContext(
+        controller.snapshot(),
+        HanpaiConstraintContext(5, False, False, True, end_tones),
+        tokenizer,
+        vocab,
+    )
+
+    assert HanpaiVerifierPolicy(lexicon).evaluate(20, context) == expected
+
+
+def test_hanpai_prevention_rejects_polyphonic_three_same_interpretation():
+    from shiju.constraints import HanpaiConstraintContext
+
+    class PolyphonicLexicon(FakeLexicon):
+        def __init__(self):
+            super().__init__()
+            self.tones["重"] = ["平", "仄"]
+            self.parts["重"] = ["一"]
+
+    tokenizer = FakeTokenizer({20: "夜"})
+    lexicon = PolyphonicLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    profile = HanpaiConstraintProfile((5, 7, 5), lexicon)
+    controller = GenerationController(
+        GenerationStateMachine(profile.layout),
+        profile.create_session(),
+    )
+    controller.advance("山雨、重")
+    context = CandidateContext(
+        controller.snapshot(),
+        HanpaiConstraintContext(5, False, False, True, ("仄",)),
+        tokenizer,
+        vocab,
+    )
+
+    assert HanpaiVerifierPolicy(lexicon).evaluate(20, context) is None
+
+
+def test_hanpai_prevention_handles_a_two_character_penultimate_token():
+    from shiju.constraints import HanpaiConstraintContext
+
+    tokenizer = FakeTokenizer({20: "月夜"})
+    lexicon = FakeLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    profile = HanpaiConstraintProfile((5, 7, 5), lexicon)
+    controller = GenerationController(
+        GenerationStateMachine(profile.layout),
+        profile.create_session(),
+    )
+    controller.advance("山雨、")
+    context = CandidateContext(
+        controller.snapshot(),
+        HanpaiConstraintContext(5, False, False, True, ("仄",)),
+        tokenizer,
+        vocab,
+    )
+
+    assert HanpaiVerifierPolicy(lexicon).evaluate(20, context) is None
+
+
+def test_hanpai_aba_prevents_a_forced_three_same_tail_before_last_character():
+    tokenizer = FakeTokenizer({20: "月", 21: "夜"})
+    lexicon = FakeLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    profile = HanpaiConstraintProfile(
+        (5, 7, 5),
+        lexicon,
+        rhyme_scheme="ABA",
+        forbid_three_same_ending=True,
+    )
+    controller = GenerationController(
+        GenerationStateMachine(profile.layout),
+        profile.create_session(),
+    )
+    processor = ConstrainedLogitsProcessor(
+        vocab=vocab,
+        controller=controller,
+        tokenizer=tokenizer,
+        input_prompt_len=0,
+        separator_policy=NewlineSeparatorPolicy(tokenizer),
+        policy_tiers=(PolicyTier("hanpai", (HanpaiVerifierPolicy(lexicon),)),),
+        config=ProcessorConfig(),
+    )
+    prefix = "[content]山雨、山雨夜\n山雨、山雨、山雨山\n山雨、月"
+    input_ids = torch.tensor([tokenizer.encode(prefix)])
+    scores = torch.arange(22, dtype=torch.float32).unsqueeze(0)
+
+    penultimate_result = processor(input_ids, scores.clone())
+    penultimate_finite = set(
+        torch.where(torch.isfinite(penultimate_result[0]))[0].tolist()
+    )
+
+    assert controller.candidate_context().allowed_end_tones == ("仄",)
+    assert 21 not in penultimate_finite  # “月夜”会迫使仄韵末字形成三仄尾
+    assert 2 in penultimate_finite  # “月山”仍可用仄声字正常收尾
+    assert tokenizer.eos_token_id not in penultimate_finite
+
+    final_input_ids = torch.tensor([tokenizer.encode(prefix + "山")])
+    final_result = processor(final_input_ids, scores.clone())
+    final_finite = set(torch.where(torch.isfinite(final_result[0]))[0].tolist())
+
+    assert 21 in final_finite
+    assert tokenizer.eos_token_id not in final_finite
+
+
 def test_hanpai_rejects_if_any_polyphonic_interpretation_is_three_same():
     from shiju.constraints import HanpaiConstraintContext
 
@@ -341,7 +470,7 @@ def test_hanpai_aojiu_can_rescue_an_isolated_level_tone():
     lexicon = FakeLexicon()
     vocab = FakeVocab(tokenizer, lexicon)
     state = GenerationStateMachine(
-        HanpaiConstraintProfile((3, 5, 3), lexicon).layout
+        GenerationLayout((LineLayout(length=4),))
     ).snapshot()
 
     strict = CandidateContext(

@@ -33,7 +33,7 @@ def main() -> None:
             min_p=0.0,
         ),
         use_constraints=True,
-        num_generations=3,
+        num_generations=5,
         save_output=True,
         rhyme_dir=Path("Rhyme"),
         meter_source=Path("Songci_Meter"),
