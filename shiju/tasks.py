@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
+
+from .constraints import (
+    ConstraintProfile,
+    RelationalConstraintProfile,
+    TemplateConstraintProfile,
+)
+from .data import MeterTemplateRepository, RhymeLexicon
+from .policies import (
+    BoundaryCoherencePolicy,
+    PolicyTier,
+    RepetitionPenaltyPolicy,
+    TangVerifierPolicy,
+)
+from .processor import (
+    ConstrainedLogitsProcessor,
+    ProcessorConfig,
+    RelationalSeparatorPolicy,
+    SeparatorPolicy,
+    TemplateSeparatorPolicy,
+)
+from .prompts import build_relational_prompt, build_template_prompt
+from .state import GenerationController, GenerationStateMachine
+from .vocab import TokenizerLike, VocabLookup
+
+
+@dataclass(frozen=True)
+class TaskRequest:
+    meter_type: str
+    form_name: str
+    theme: str
+    rhyme_dict_name: str
+    task_type: str = "instruction"
+    requirement: str = ""
+    use_thinking: bool = True
+    cipai_data_path: str = "PoeTone-main/data/cipai_data.json"
+
+
+@dataclass(frozen=True)
+class TaskContext:
+    tokenizer: TokenizerLike
+    vocab: VocabLookup
+    lexicon: RhymeLexicon
+    meter_source: Path
+
+
+@dataclass(frozen=True)
+class TaskRuntime:
+    profile: ConstraintProfile
+    messages: list[dict[str, str]]
+    separator_policy: SeparatorPolicy
+    policy_tiers: tuple[PolicyTier, ...]
+    processor_config: ProcessorConfig
+
+    def create_processor(
+        self,
+        vocab: VocabLookup,
+        tokenizer: TokenizerLike,
+        input_prompt_len: int,
+    ) -> ConstrainedLogitsProcessor:
+        session = self.profile.create_session()
+        state_machine = GenerationStateMachine(self.profile.layout)
+        controller = GenerationController(state_machine, session)
+        return ConstrainedLogitsProcessor(
+            vocab=vocab,
+            controller=controller,
+            tokenizer=tokenizer,
+            input_prompt_len=input_prompt_len,
+            separator_policy=self.separator_policy,
+            policy_tiers=self.policy_tiers,
+            config=self.processor_config,
+        )
+
+
+class TaskFactory(Protocol):
+    def create(self, request: TaskRequest, context: TaskContext) -> TaskRuntime: ...
+
+
+class TemplateTaskFactory:
+    def create(self, request: TaskRequest, context: TaskContext) -> TaskRuntime:
+        template = MeterTemplateRepository(context.meter_source).get(request.form_name)
+        profile = TemplateConstraintProfile(template, context.lexicon)
+        rhyming_lines = frozenset(
+            index for index, line in enumerate(template.lines) if line.rhyme_group is not None
+        )
+        separator = TemplateSeparatorPolicy(context.tokenizer, rhyming_lines)
+        boundary = BoundaryCoherencePolicy(context.vocab.common_bigrams())
+        messages = build_template_prompt(
+            task_type=request.task_type,
+            template=template,
+            theme=request.theme,
+            requirement=request.requirement,
+            use_thinking=request.use_thinking,
+            rhyme_dict_name=request.rhyme_dict_name,
+            cipai_data_path=request.cipai_data_path,
+        )
+        return TaskRuntime(
+            profile=profile,
+            messages=messages,
+            separator_policy=separator,
+            policy_tiers=(
+                PolicyTier("template", (RepetitionPenaltyPolicy(), boundary)),
+            ),
+            processor_config=ProcessorConfig(),
+        )
+
+
+class RelationalTaskFactory:
+    def create(self, request: TaskRequest, context: TaskContext) -> TaskRuntime:
+        line_length, num_lines, rhyme_type = parse_tang_format(request.form_name)
+        profile = RelationalConstraintProfile(
+            line_length=line_length,
+            num_lines=num_lines,
+            rhyme_type=rhyme_type,
+            lexicon=context.lexicon,
+        )
+        boundary = BoundaryCoherencePolicy(context.vocab.common_bigrams())
+        messages = build_relational_prompt(
+            task_type=request.task_type,
+            form_name=request.form_name,
+            theme=request.theme,
+            line_length=line_length,
+            num_lines=num_lines,
+            requirement=request.requirement,
+            use_thinking=request.use_thinking,
+            rhyme_dict_name=request.rhyme_dict_name,
+        )
+        return TaskRuntime(
+            profile=profile,
+            messages=messages,
+            separator_policy=RelationalSeparatorPolicy(context.tokenizer),
+            policy_tiers=(
+                PolicyTier("tang-full", (TangVerifierPolicy(context.lexicon, "full"), boundary)),
+                PolicyTier("tang-critical", (TangVerifierPolicy(context.lexicon, "critical"),)),
+            ),
+            processor_config=ProcessorConfig(
+                relax_rhyme_on_empty=True,
+                raw_on_no_candidates=True,
+                raw_after_policy_failure=True,
+                release_constraints_after_finish=True,
+                separator_empty_returns_raw=True,
+            ),
+        )
+
+
+class TaskFactoryRegistry:
+    def __init__(self):
+        self._factories: dict[str, TaskFactory] = {}
+
+    def register(self, meter_type: str, factory: TaskFactory) -> None:
+        self._factories[meter_type] = factory
+
+    def create(self, request: TaskRequest, context: TaskContext) -> TaskRuntime:
+        try:
+            factory = self._factories[request.meter_type]
+        except KeyError as exc:
+            raise ValueError(f"不支持的生成类型: {request.meter_type}") from exc
+        return factory.create(request, context)
+
+
+def default_task_registry() -> TaskFactoryRegistry:
+    registry = TaskFactoryRegistry()
+    registry.register("宋词", TemplateTaskFactory())
+    registry.register("唐诗", RelationalTaskFactory())
+    return registry
+
+
+def parse_tang_format(form_name: str) -> tuple[int, int, str]:
+    name = form_name.strip()
+    line_length = 5 if "五" in name else 7
+    num_lines = 4 if "绝" in name else 8
+    rhyme_type = "仄韵" if "仄" in name and "韵" in name else "平韵"
+    return line_length, num_lines, rhyme_type

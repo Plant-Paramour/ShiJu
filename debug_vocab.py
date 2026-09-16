@@ -1,8 +1,10 @@
-import torch
-from transformers import AutoTokenizer
-from data_manager import DataManager
-from vocab_indexer import VocabIndexer
 import re
+
+from transformers import AutoTokenizer
+
+from shiju.data import RhymeLexicon
+from shiju.vocab import VocabIndex
+
 
 def test_vocab_indexer():
     model_name = r"C:\Users\26051\.cache\modelscope\hub\models\Qwen\Qwen3-4B"
@@ -38,15 +40,16 @@ def test_vocab_indexer():
     print(f"  Raw token string match count: {count_raw_match}")
     print(f"  Decoded token string match count: {count_decoded_match}")
     
-    print("\n--- 2. Testing DataManager (Pingze & Rhyme) ---")
+    print("\n--- 2. Testing RhymeLexicon (Pingze & Rhyme) ---")
     try:
-        dm = DataManager(rhyme_dict_path="Rhyme/Cilin.json", poem_path="Songci_Meter")
-        pz_chun = dm.get_pingze("春")
-        pz_hua = dm.get_pingze("花")
+        lexicon = RhymeLexicon("Rhyme/Cilin.json")
+        pz_chun = lexicon.get_pingze("春")
+        pz_hua = lexicon.get_pingze("花")
         print(f"春的平仄: {pz_chun}")
         print(f"花的平仄: {pz_hua}")
+        VocabIndex(tokenizer, lexicon)
     except Exception as e:
-        print(f"DataManager Error: {e}")
+        print(f"Constraint data error: {e}")
 
 if __name__ == "__main__":
     test_vocab_indexer()
