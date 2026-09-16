@@ -8,7 +8,7 @@ def main() -> None:
     config = AppConfig(
         model=ModelConfig(
             model_name=r"C:\Users\26051\.cache\modelscope\hub\models\Qwen\Qwen3-4B",
-            quantization="8bit",
+            quantization="4bit",
         ),
         task=TaskRequest(
             meter_type="宋词",
@@ -16,17 +16,17 @@ def main() -> None:
             task_type="instruction",
             theme="婉约相思",
             form_name="浣溪沙",
-            requirement="",
+            requirement="学姐毕业一年，探问工作情况如何，生活如何。委婉表达思念和倾慕。",
             use_thinking=False,
         ),
         sampling=SamplingConfig(
-            temperature=0.6,
-            top_p=0.95,
+            temperature=0.7,
+            top_p=0.8,
             top_k=20,
             min_p=0.0,
         ),
         use_constraints=True,
-        num_generations=3,
+        num_generations=5,
         save_output=True,
         rhyme_dir=Path("Rhyme"),
         meter_source=Path("Songci_Meter"),
