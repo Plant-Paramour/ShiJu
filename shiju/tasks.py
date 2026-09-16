@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -12,7 +11,6 @@ from .constraints import (
     TemplateConstraintProfile,
 )
 from .data import MeterTemplateRepository, RhymeLexicon
-from .domain import CONTENT_MARKER
 from .policies import (
     BoundaryCoherencePolicy,
     HanpaiVerifierPolicy,
@@ -31,17 +29,6 @@ from .processor import (
 from .prompts import build_hanpai_prompt, build_relational_prompt, build_template_prompt
 from .state import GenerationController, GenerationStateMachine
 from .vocab import TokenizerLike, VocabLookup
-
-
-def _identity_output(text: str) -> str:
-    return text
-
-
-def _strip_hanpai_caesuras(text: str) -> str:
-    prefix, marker, content = text.partition(CONTENT_MARKER)
-    if not marker:
-        return text
-    return prefix + marker + content.replace("、", "")
 
 
 @dataclass(frozen=True)
@@ -90,7 +77,6 @@ class TaskContext:
     vocab: VocabLookup
     lexicon: RhymeLexicon
     meter_source: Path
-    boundary_coherence_penalty: float
 
 
 @dataclass(frozen=True)
@@ -100,7 +86,6 @@ class TaskRuntime:
     separator_policy: SeparatorPolicy
     policy_tiers: tuple[PolicyTier, ...]
     processor_config: ProcessorConfig
-    output_transform: Callable[[str], str] = _identity_output
 
     def create_processor(
         self,
@@ -121,9 +106,6 @@ class TaskRuntime:
             config=self.processor_config,
         )
 
-    def process_output(self, text: str) -> str:
-        return self.output_transform(text)
-
 
 class TaskFactory(Protocol):
     def create(self, request: TaskRequest, context: TaskContext) -> TaskRuntime: ...
@@ -137,9 +119,7 @@ class TemplateTaskFactory:
             index for index, line in enumerate(template.lines) if line.rhyme_group is not None
         )
         separator = TemplateSeparatorPolicy(context.tokenizer, rhyming_lines)
-        boundary = BoundaryCoherencePolicy(
-            context.vocab.common_bigrams(), context.boundary_coherence_penalty
-        )
+        boundary = BoundaryCoherencePolicy(context.vocab.common_bigrams())
         messages = build_template_prompt(
             task_type=request.task_type,
             template=template,
@@ -169,9 +149,7 @@ class RelationalTaskFactory:
             rhyme_type=rhyme_type,
             lexicon=context.lexicon,
         )
-        boundary = BoundaryCoherencePolicy(
-            context.vocab.common_bigrams(), context.boundary_coherence_penalty
-        )
+        boundary = BoundaryCoherencePolicy(context.vocab.common_bigrams())
         messages = build_relational_prompt(
             task_type=request.task_type,
             form_name=request.form_name,
@@ -212,9 +190,7 @@ class HanpaiTaskFactory:
             allow_aojiu=options.allow_aojiu,
             forbid_three_same_ending=options.forbid_three_same_ending,
         )
-        boundary = BoundaryCoherencePolicy(
-            context.vocab.common_bigrams(), context.boundary_coherence_penalty
-        )
+        boundary = BoundaryCoherencePolicy(context.vocab.common_bigrams())
         messages = build_hanpai_prompt(
             task_type=request.task_type,
             form_name=request.form_name,
@@ -246,7 +222,6 @@ class HanpaiTaskFactory:
                 ),
             ),
             processor_config=ProcessorConfig(),
-            output_transform=_strip_hanpai_caesuras,
         )
 
 

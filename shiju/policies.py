@@ -1,18 +1,14 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
+from itertools import product
 from typing import Any, Protocol, Sequence
 
-from .candidates import (
-    decode_position_candidate,
-    has_three_same_ending,
-    iter_tone_combinations,
-)
 from .constraints import HanpaiConstraintContext, RelationalConstraintContext
 from .data import RhymeLookup
 from .domain import GenerationState
-from .tone_rules import HanpaiIsolatedLevelRule, RejectThreeSameEndingRule, ToneRuleSet
 from .vocab import TokenizerLike, VocabLookup
 
 
@@ -46,9 +42,7 @@ class PolicyTier:
 class BoundaryCoherencePolicy:
     """统一的句读粘连惩罚。"""
 
-    def __init__(self, common_bigrams: frozenset[str], penalty: float):
-        if penalty < 0:
-            raise ValueError(f"句读粘连惩罚不能为负数: {penalty}")
+    def __init__(self, common_bigrams: frozenset[str], penalty: float = 50.0):
         self._common_bigrams = common_bigrams
         self._penalty = penalty
 
@@ -95,6 +89,8 @@ class RepetitionPenaltyPolicy:
 class HanpaiVerifierPolicy:
     """校验汉俳可选的孤平、拗救和句尾三连同规则。"""
 
+    _TEXT_CHAR = re.compile(r"[一-龥A-Za-z]")
+
     def __init__(self, lexicon: RhymeLookup):
         self._lexicon = lexicon
 
@@ -103,16 +99,16 @@ class HanpaiVerifierPolicy:
         if not isinstance(info, HanpaiConstraintContext):
             raise TypeError("HanpaiVerifierPolicy 需要 HanpaiConstraintContext")
 
-        candidate = decode_position_candidate(
-            token_id, context.tokenizer, context.vocab, context.state
+        raw = context.tokenizer.decode([token_id])
+        token_text = context.vocab.text_for_token(token_id)
+        if not token_text:
+            token_text = raw.replace(" ", "").replace("\r", "")
+        token_chars = "".join(
+            char for char in token_text if self._TEXT_CHAR.fullmatch(char)
         )
-        if candidate is None:
+        if re.search(r"[\s　，。、？！；：\n\r]", raw) or not token_chars:
             return None
-        token_chars = candidate.text
 
-        state = context.state
-        if state.line is None:
-            return None
         simulated = context.state.current_line_text + token_chars
         if len(simulated) > info.target_length:
             return None
@@ -121,24 +117,41 @@ class HanpaiVerifierPolicy:
         if not info.forbid_isolated_level and not info.forbid_three_same_ending:
             return 0.0
 
-        reject_rules = (
-            (RejectThreeSameEndingRule(),)
-            if info.forbid_three_same_ending
-            else ()
-        )
-        accept_rules = (
-            (HanpaiIsolatedLevelRule(info.allow_aojiu),)
-            if info.forbid_isolated_level
-            else ()
-        )
-        tone_rules = ToneRuleSet(reject_any=reject_rules, accept_any=accept_rules)
-        if not tone_rules.validate(iter_tone_combinations(simulated, self._lexicon)):
+        tone_options = [self._lexicon.get_pingze(char) for char in simulated]
+        if any(not options for options in tone_options):
             return None
-        return 0.0
+        for tones in product(*tone_options):
+            if self._valid_tone_sequence(tones, info):
+                return 0.0
+        return None
+
+    @staticmethod
+    def _valid_tone_sequence(
+        tones: tuple[str, ...],
+        info: HanpaiConstraintContext,
+    ) -> bool:
+        if info.forbid_three_same_ending and len(tones) >= 3:
+            if len(set(tones[-3:])) == 1:
+                return False
+        if not info.forbid_isolated_level:
+            return True
+
+        for index in range(1, len(tones) - 1):
+            if tones[index - 1 : index + 2] != ("仄", "平", "仄"):
+                continue
+            if info.allow_aojiu:
+                left_rescue = index >= 2 and tones[index - 2] == "平"
+                right_rescue = index + 2 < len(tones) and tones[index + 2] == "平"
+                if left_rescue or right_rescue:
+                    continue
+            return False
+        return True
 
 
 class TangVerifierPolicy:
     """唐诗 poem_verifier 风格规则；mode=critical 时只保留核心格律底线。"""
+
+    _TEXT_CHAR = re.compile(r"[一-龥A-Za-z]")
 
     def __init__(self, lexicon: RhymeLookup, mode: str = "full"):
         if mode not in {"full", "critical"}:
@@ -154,23 +167,31 @@ class TangVerifierPolicy:
             return self._critical(token_id, context, relational)
         return self._full(token_id, context, relational)
 
+    def _decode_chars(self, token_id: int, context: CandidateContext) -> tuple[str, str]:
+        raw = context.tokenizer.decode([token_id])
+        text = context.vocab.text_for_token(token_id)
+        if not text:
+            text = raw.replace(" ", "").replace("\r", "")
+        chars = "".join(char for char in text if self._TEXT_CHAR.fullmatch(char))
+        return raw, chars
+
     def _full(
         self,
         token_id: int,
         context: CandidateContext,
         info: RelationalConstraintContext,
     ) -> float | None:
-        candidate = decode_position_candidate(
-            token_id, context.tokenizer, context.vocab, context.state
-        )
-        if candidate is None:
+        raw, token_chars = self._decode_chars(token_id, context)
+        if re.search(r"[\s　，。、？！；：\n\r]", raw) or not token_chars:
             return None
-        token_chars = candidate.text
         if any(char in {"的", "些", "么", "了"} for char in token_chars):
             return None
 
         state = context.state
         if state.line is None:
+            return None
+        new_position = state.char_index + len(token_chars)
+        if any(state.char_index < point < new_position for point in state.line.break_positions):
             return None
 
         simulated = state.current_line_text + token_chars
@@ -185,7 +206,7 @@ class TangVerifierPolicy:
         if not self._check_prevent_three_same(simulated, target_length, end_tone):
             return None
         if len(simulated) == target_length:
-            if has_three_same_ending(simulated, self._lexicon):
+            if not self._check_last_three(simulated):
                 return None
             if not self._check_isolated_level(simulated, line_tone):
                 return None
@@ -211,14 +232,14 @@ class TangVerifierPolicy:
         context: CandidateContext,
         info: RelationalConstraintContext,
     ) -> float | None:
-        candidate = decode_position_candidate(
-            token_id, context.tokenizer, context.vocab, context.state
-        )
-        if candidate is None:
+        raw, token_chars = self._decode_chars(token_id, context)
+        if re.search(r"[\s　，。、？！；：\n\r]", raw) or not token_chars:
             return None
-        token_chars = candidate.text
         state = context.state
         if state.line is None:
+            return None
+        new_position = state.char_index + len(token_chars)
+        if any(state.char_index < point < new_position for point in state.line.break_positions):
             return None
         simulated = state.current_line_text + token_chars
         if len(simulated) > info.target_length:
@@ -230,7 +251,7 @@ class TangVerifierPolicy:
         if not self._check_prevent_three_same(simulated, info.target_length, end_tone):
             return None
         if len(simulated) == info.target_length:
-            if has_three_same_ending(simulated, self._lexicon):
+            if not self._check_last_three(simulated):
                 return None
             if not self._check_end_tone(simulated[-1], end_tone):
                 return None
@@ -278,6 +299,18 @@ class TangVerifierPolicy:
             return True
         expected = "平" if end_tone == 0 else "仄"
         return not (third_tones[0] == expected and current_tones[0] == expected)
+
+    def _check_last_three(self, line: str) -> bool:
+        if len(line) < 3:
+            return True
+        options = []
+        for char in line[-3:]:
+            tones = self._lexicon.get_pingze(char)
+            options.append([0 if tone == "平" else 1 for tone in tones] or [None])
+        for combination in product(*options):
+            if None not in combination and sum(combination) in (0, 3):
+                return False
+        return True
 
     def _check_isolated_level(self, line: str, line_tone: int) -> bool:
         if len(line) < 3:

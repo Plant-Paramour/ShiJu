@@ -10,7 +10,7 @@ def test_tang_task_does_not_read_meter_source(tmp_path):
     lexicon = FakeLexicon()
     vocab = FakeVocab(tokenizer, lexicon)
     missing_source = tmp_path / "missing-songci-meter"
-    context = TaskContext(tokenizer, vocab, lexicon, missing_source, 50.0)
+    context = TaskContext(tokenizer, vocab, lexicon, missing_source)
     request = TaskRequest(
         meter_type="唐诗",
         form_name="七律",
@@ -30,7 +30,7 @@ def test_template_task_reuses_resolved_default_variant_in_prompt():
     lexicon = FakeLexicon()
     vocab = FakeVocab(tokenizer, lexicon)
     meter_source = Path(__file__).resolve().parents[1] / "Songci_Meter"
-    context = TaskContext(tokenizer, vocab, lexicon, meter_source, 50.0)
+    context = TaskContext(tokenizer, vocab, lexicon, meter_source)
     request = TaskRequest(
         meter_type="宋词",
         form_name="浣溪沙",
@@ -56,7 +56,7 @@ def test_hanpai_task_composes_format_season_prosody_and_rhyme_options(tmp_path):
     lexicon = FakeLexicon()
     vocab = FakeVocab(tokenizer, lexicon)
     missing_source = tmp_path / "missing-songci-meter"
-    context = TaskContext(tokenizer, vocab, lexicon, missing_source, 50.0)
+    context = TaskContext(tokenizer, vocab, lexicon, missing_source)
     request = TaskRequest(
         meter_type="汉俳",
         form_name="汉俳",
@@ -83,13 +83,6 @@ def test_hanpai_task_composes_format_season_prosody_and_rhyme_options(tmp_path):
     assert "允许使用邻位平声完成拗救" in prompt
     assert "句尾不得出现三连平或三连仄" in prompt
     assert "采用 BAA 式" in prompt
-    assert "临时插入顿号以提示节奏" in prompt
-    transformed = runtime.process_output(
-        "规划、保留\n[title]汉俳·秋思\n[content]寒蝉、声渐远\n学姐、去何、方云鬓"
-    )
-    assert transformed == (
-        "规划、保留\n[title]汉俳·秋思\n[content]寒蝉声渐远\n学姐去何方云鬓"
-    )
     assert not missing_source.exists()
 
 
@@ -97,7 +90,7 @@ def test_hanpai_defaults_require_an_arbitrary_season_word(tmp_path):
     tokenizer = FakeTokenizer()
     lexicon = FakeLexicon()
     vocab = FakeVocab(tokenizer, lexicon)
-    context = TaskContext(tokenizer, vocab, lexicon, tmp_path / "missing", 50.0)
+    context = TaskContext(tokenizer, vocab, lexicon, tmp_path / "missing")
     request = TaskRequest(
         meter_type="汉俳",
         form_name="汉俳",
@@ -113,21 +106,3 @@ def test_hanpai_defaults_require_an_arbitrary_season_word(tmp_path):
     assert "仍必须自行选择并使用一个明显、具体的季语" in prompt
     assert "不额外限定平仄格律" in prompt
     assert "不设置押韵要求" in prompt
-
-
-def test_task_factories_receive_configured_boundary_penalty(tmp_path):
-    tokenizer = FakeTokenizer()
-    lexicon = FakeLexicon()
-    vocab = FakeVocab(tokenizer, lexicon)
-    context = TaskContext(tokenizer, vocab, lexicon, tmp_path / "missing", 12.5)
-    request = TaskRequest(
-        meter_type="汉俳",
-        form_name="汉俳",
-        theme="秋夜",
-        rhyme_dict_name="Xinyun",
-    )
-
-    runtime = default_task_registry().create(request, context)
-    boundary_policy = runtime.policy_tiers[0].policies[-1]
-
-    assert boundary_policy._penalty == 12.5
