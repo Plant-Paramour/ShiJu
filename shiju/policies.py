@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from itertools import product
 from typing import Any, Protocol, Sequence
 
-from .constraints import RelationalConstraintContext
+from .constraints import HanpaiConstraintContext, RelationalConstraintContext
 from .data import RhymeLookup
 from .domain import GenerationState
 from .vocab import TokenizerLike, VocabLookup
@@ -84,6 +84,68 @@ class RepetitionPenaltyPolicy:
             decayed = self._base_penalty * math.exp(-self._decay_rate * distance)
             penalty += max(self._min_penalty, decayed)
         return penalty
+
+
+class HanpaiVerifierPolicy:
+    """校验汉俳可选的孤平、拗救和句尾三连同规则。"""
+
+    _TEXT_CHAR = re.compile(r"[一-龥A-Za-z]")
+
+    def __init__(self, lexicon: RhymeLookup):
+        self._lexicon = lexicon
+
+    def evaluate(self, token_id: int, context: CandidateContext) -> float | None:
+        info = context.constraint
+        if not isinstance(info, HanpaiConstraintContext):
+            raise TypeError("HanpaiVerifierPolicy 需要 HanpaiConstraintContext")
+
+        raw = context.tokenizer.decode([token_id])
+        token_text = context.vocab.text_for_token(token_id)
+        if not token_text:
+            token_text = raw.replace(" ", "").replace("\r", "")
+        token_chars = "".join(
+            char for char in token_text if self._TEXT_CHAR.fullmatch(char)
+        )
+        if re.search(r"[\s　，。、？！；：\n\r]", raw) or not token_chars:
+            return None
+
+        simulated = context.state.current_line_text + token_chars
+        if len(simulated) > info.target_length:
+            return None
+        if len(simulated) < info.target_length:
+            return 0.0
+        if not info.forbid_isolated_level and not info.forbid_three_same_ending:
+            return 0.0
+
+        tone_options = [self._lexicon.get_pingze(char) for char in simulated]
+        if any(not options for options in tone_options):
+            return None
+        for tones in product(*tone_options):
+            if self._valid_tone_sequence(tones, info):
+                return 0.0
+        return None
+
+    @staticmethod
+    def _valid_tone_sequence(
+        tones: tuple[str, ...],
+        info: HanpaiConstraintContext,
+    ) -> bool:
+        if info.forbid_three_same_ending and len(tones) >= 3:
+            if len(set(tones[-3:])) == 1:
+                return False
+        if not info.forbid_isolated_level:
+            return True
+
+        for index in range(1, len(tones) - 1):
+            if tones[index - 1 : index + 2] != ("仄", "平", "仄"):
+                continue
+            if info.allow_aojiu:
+                left_rescue = index >= 2 and tones[index - 2] == "平"
+                right_rescue = index + 2 < len(tones) and tones[index + 2] == "平"
+                if left_rescue or right_rescue:
+                    continue
+            return False
+        return True
 
 
 class TangVerifierPolicy:

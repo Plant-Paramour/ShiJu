@@ -102,6 +102,22 @@ class RelationalSeparatorPolicy:
         return set(self._comma)
 
 
+class NewlineSeparatorPolicy:
+    """用于每行按固定字数结束、行间只换行的诗体。"""
+
+    def __init__(self, tokenizer: TokenizerLike):
+        self._newline = _exact_token_ids(tokenizer, ("\n",))
+
+    @property
+    def newline_tokens(self) -> set[int]:
+        return set(self._newline)
+
+    def allowed_tokens(self, state: GenerationState, constraint_context) -> set[int]:
+        if state.step is StepKind.NEWLINE:
+            return set(self._newline)
+        return set()
+
+
 class ConstrainedLogitsProcessor(LogitsProcessor):
     """诗体无关的约束解码管线。"""
 

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from shiju.tasks import TaskContext, TaskRequest, default_task_registry
+from shiju.tasks import HanpaiOptions, TaskContext, TaskRequest, default_task_registry
 
 from conftest import FakeLexicon, FakeTokenizer, FakeVocab
 
@@ -49,3 +49,60 @@ def test_template_task_reuses_resolved_default_variant_in_prompt():
     assert output_template in runtime.messages[-1]["content"]
     assert "[title]浣溪沙·春思\n[content]柳色含烟" in prompt
     assert "两个标记均不可省略、修改或替换" in prompt
+
+
+def test_hanpai_task_composes_format_season_prosody_and_rhyme_options(tmp_path):
+    tokenizer = FakeTokenizer()
+    lexicon = FakeLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    missing_source = tmp_path / "missing-songci-meter"
+    context = TaskContext(tokenizer, vocab, lexicon, missing_source)
+    request = TaskRequest(
+        meter_type="汉俳",
+        form_name="汉俳",
+        theme="初秋离别",
+        rhyme_dict_name="Xinyun",
+        use_thinking=False,
+        hanpai=HanpaiOptions(
+            line_pattern="3-5-3",
+            season_words=("寒蝉", "雁影"),
+            forbid_isolated_level=True,
+            allow_aojiu=True,
+            forbid_three_same_ending=True,
+            rhyme_scheme="baa",
+        ),
+    )
+
+    runtime = default_task_registry().create(request, context)
+    prompt = "\n".join(message["content"] for message in runtime.messages)
+
+    assert [line.length for line in runtime.profile.layout.lines] == [3, 5, 3]
+    assert runtime.profile.rhyme_scheme == "BAA"
+    assert runtime.profile.rhyme_lines == frozenset({1, 2})
+    assert "必须且只能从候选季语 “寒蝉”、“雁影” 中选择一个" in prompt
+    assert "允许使用邻位平声完成拗救" in prompt
+    assert "句尾不得出现三连平或三连仄" in prompt
+    assert "采用 BAA 式" in prompt
+    assert not missing_source.exists()
+
+
+def test_hanpai_defaults_require_an_arbitrary_season_word(tmp_path):
+    tokenizer = FakeTokenizer()
+    lexicon = FakeLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    context = TaskContext(tokenizer, vocab, lexicon, tmp_path / "missing")
+    request = TaskRequest(
+        meter_type="汉俳",
+        form_name="汉俳",
+        theme="山居",
+        rhyme_dict_name="Xinyun",
+        use_thinking=False,
+    )
+
+    runtime = default_task_registry().create(request, context)
+    prompt = "\n".join(message["content"] for message in runtime.messages)
+
+    assert [line.length for line in runtime.profile.layout.lines] == [5, 7, 5]
+    assert "仍必须自行选择并使用一个明显、具体的季语" in prompt
+    assert "不额外限定平仄格律" in prompt
+    assert "不设置押韵要求" in prompt
