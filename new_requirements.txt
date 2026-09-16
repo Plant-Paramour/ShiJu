@@ -1,0 +1,26 @@
+# ============================================================
+# 服务器环境: PyTorch 2.8.0 / Python 3.12 / CUDA 12.8 / Ubuntu 22.04
+# ============================================================
+#
+# (二选一):
+#
+#   uv (推荐，速度飞快):
+#     uv pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+#     uv pip install -r new_requirements.txt
+#
+#   pip:
+#     pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+#     pip install -r new_requirements.txt
+#
+#   模型下载
+#     modelscope download --model Qwen/Qwen3-8B --local_dir /root/autodl-tmp/models/Qwen3-8B
+# ============================================================
+
+torch==2.8.0
+numpy==1.26.4
+transformers==4.57.3
+tqdm==4.67.1
+psutil==7.0.0
+pypinyin==0.55.0
+bitsandbytes==0.49.2
+accelerate==1.11.0
