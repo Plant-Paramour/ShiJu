@@ -1,31 +1,74 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
 from .constraints import (
     ConstraintProfile,
+    HanpaiConstraintProfile,
     RelationalConstraintProfile,
     TemplateConstraintProfile,
 )
 from .data import MeterTemplateRepository, RhymeLexicon
+from .domain import CONTENT_MARKER
 from .policies import (
     BoundaryCoherencePolicy,
+    HanpaiVerifierPolicy,
     PolicyTier,
     RepetitionPenaltyPolicy,
     TangVerifierPolicy,
 )
 from .processor import (
     ConstrainedLogitsProcessor,
+    NewlineSeparatorPolicy,
     ProcessorConfig,
     RelationalSeparatorPolicy,
     SeparatorPolicy,
     TemplateSeparatorPolicy,
 )
-from .prompts import build_relational_prompt, build_template_prompt
+from .prompts import build_hanpai_prompt, build_relational_prompt, build_template_prompt
 from .state import GenerationController, GenerationStateMachine
 from .vocab import TokenizerLike, VocabLookup
+
+
+def _identity_output(text: str) -> str:
+    return text
+
+
+def _strip_hanpai_caesuras(text: str) -> str:
+    prefix, marker, content = text.partition(CONTENT_MARKER)
+    if not marker:
+        return text
+    return prefix + marker + content.replace("、", "")
+
+
+@dataclass(frozen=True)
+class HanpaiOptions:
+    line_pattern: str = "5-7-5"
+    season_word: str | None = None
+    season_words: tuple[str, ...] = ()
+    season: str | None = None
+    forbid_isolated_level: bool = False
+    allow_aojiu: bool = False
+    forbid_three_same_ending: bool = False
+    rhyme_scheme: str | None = None
+
+    def __post_init__(self) -> None:
+        selections = (
+            self.season_word is not None,
+            bool(self.season_words),
+            self.season is not None,
+        )
+        if sum(selections) > 1:
+            raise ValueError("季语、候选季语和季节只能配置其中一种")
+        if self.season_word is not None and not self.season_word.strip():
+            raise ValueError("指定季语不能为空")
+        if self.season is not None and not self.season.strip():
+            raise ValueError("指定季节不能为空")
+        if any(not word.strip() for word in self.season_words):
+            raise ValueError("候选季语不能包含空值")
 
 
 @dataclass(frozen=True)
@@ -38,6 +81,7 @@ class TaskRequest:
     requirement: str = ""
     use_thinking: bool = True
     cipai_data_path: str = "PoeTone-main/data/cipai_data.json"
+    hanpai: HanpaiOptions = field(default_factory=HanpaiOptions)
 
 
 @dataclass(frozen=True)
@@ -46,6 +90,7 @@ class TaskContext:
     vocab: VocabLookup
     lexicon: RhymeLexicon
     meter_source: Path
+    boundary_coherence_penalty: float
 
 
 @dataclass(frozen=True)
@@ -55,6 +100,7 @@ class TaskRuntime:
     separator_policy: SeparatorPolicy
     policy_tiers: tuple[PolicyTier, ...]
     processor_config: ProcessorConfig
+    output_transform: Callable[[str], str] = _identity_output
 
     def create_processor(
         self,
@@ -75,6 +121,9 @@ class TaskRuntime:
             config=self.processor_config,
         )
 
+    def process_output(self, text: str) -> str:
+        return self.output_transform(text)
+
 
 class TaskFactory(Protocol):
     def create(self, request: TaskRequest, context: TaskContext) -> TaskRuntime: ...
@@ -88,7 +137,9 @@ class TemplateTaskFactory:
             index for index, line in enumerate(template.lines) if line.rhyme_group is not None
         )
         separator = TemplateSeparatorPolicy(context.tokenizer, rhyming_lines)
-        boundary = BoundaryCoherencePolicy(context.vocab.common_bigrams())
+        boundary = BoundaryCoherencePolicy(
+            context.vocab.common_bigrams(), context.boundary_coherence_penalty
+        )
         messages = build_template_prompt(
             task_type=request.task_type,
             template=template,
@@ -118,7 +169,9 @@ class RelationalTaskFactory:
             rhyme_type=rhyme_type,
             lexicon=context.lexicon,
         )
-        boundary = BoundaryCoherencePolicy(context.vocab.common_bigrams())
+        boundary = BoundaryCoherencePolicy(
+            context.vocab.common_bigrams(), context.boundary_coherence_penalty
+        )
         messages = build_relational_prompt(
             task_type=request.task_type,
             form_name=request.form_name,
@@ -147,6 +200,56 @@ class RelationalTaskFactory:
         )
 
 
+class HanpaiTaskFactory:
+    def create(self, request: TaskRequest, context: TaskContext) -> TaskRuntime:
+        options = request.hanpai
+        line_lengths = parse_hanpai_format(options.line_pattern)
+        profile = HanpaiConstraintProfile(
+            line_lengths=line_lengths,
+            lexicon=context.lexicon,
+            rhyme_scheme=options.rhyme_scheme,
+            forbid_isolated_level=options.forbid_isolated_level,
+            allow_aojiu=options.allow_aojiu,
+            forbid_three_same_ending=options.forbid_three_same_ending,
+        )
+        boundary = BoundaryCoherencePolicy(
+            context.vocab.common_bigrams(), context.boundary_coherence_penalty
+        )
+        messages = build_hanpai_prompt(
+            task_type=request.task_type,
+            form_name=request.form_name,
+            theme=request.theme,
+            line_lengths=line_lengths,
+            requirement=request.requirement,
+            use_thinking=request.use_thinking,
+            rhyme_dict_name=request.rhyme_dict_name,
+            season_word=options.season_word,
+            season_words=options.season_words,
+            season=options.season,
+            forbid_isolated_level=options.forbid_isolated_level,
+            allow_aojiu=options.allow_aojiu,
+            forbid_three_same_ending=options.forbid_three_same_ending,
+            rhyme_scheme=profile.rhyme_scheme,
+        )
+        return TaskRuntime(
+            profile=profile,
+            messages=messages,
+            separator_policy=NewlineSeparatorPolicy(context.tokenizer),
+            policy_tiers=(
+                PolicyTier(
+                    "hanpai",
+                    (
+                        HanpaiVerifierPolicy(context.lexicon),
+                        RepetitionPenaltyPolicy(),
+                        boundary,
+                    ),
+                ),
+            ),
+            processor_config=ProcessorConfig(),
+            output_transform=_strip_hanpai_caesuras,
+        )
+
+
 class TaskFactoryRegistry:
     def __init__(self):
         self._factories: dict[str, TaskFactory] = {}
@@ -166,6 +269,7 @@ def default_task_registry() -> TaskFactoryRegistry:
     registry = TaskFactoryRegistry()
     registry.register("宋词", TemplateTaskFactory())
     registry.register("唐诗", RelationalTaskFactory())
+    registry.register("汉俳", HanpaiTaskFactory())
     return registry
 
 
@@ -175,3 +279,27 @@ def parse_tang_format(form_name: str) -> tuple[int, int, str]:
     num_lines = 4 if "绝" in name else 8
     rhyme_type = "仄韵" if "仄" in name and "韵" in name else "平韵"
     return line_length, num_lines, rhyme_type
+
+
+def parse_hanpai_format(line_pattern: str) -> tuple[int, int, int]:
+    normalized = (
+        line_pattern.strip()
+        .replace("－", "-")
+        .replace("—", "-")
+        .replace("×", "-")
+        .replace(" ", "")
+    )
+    formats = {
+        "5-7-5": (5, 7, 5),
+        "575": (5, 7, 5),
+        "五七五": (5, 7, 5),
+        "3-5-3": (3, 5, 3),
+        "353": (3, 5, 3),
+        "三五三": (3, 5, 3),
+    }
+    try:
+        return formats[normalized]
+    except KeyError as exc:
+        raise ValueError(
+            f"汉俳格式仅支持 5-7-5 或 3-5-3，收到: {line_pattern}"
+        ) from exc

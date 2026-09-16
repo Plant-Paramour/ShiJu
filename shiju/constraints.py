@@ -133,6 +133,164 @@ class TemplateConstraintSession(BaseConstraintSession):
 
 
 @dataclass(frozen=True)
+class HanpaiConstraintContext:
+    target_length: int
+    forbid_isolated_level: bool
+    allow_aojiu: bool
+    forbid_three_same_ending: bool
+
+
+class HanpaiConstraintProfile:
+    """汉俳的变长三行布局与可选声韵规则。"""
+
+    _BREAKS = {
+        3: frozenset(),
+        5: frozenset({2}),
+        7: frozenset({2, 4}),
+    }
+    _RHYME_LINES = {
+        "AAA": frozenset({0, 1, 2}),
+        "ABA": frozenset({0, 2}),
+        "BAA": frozenset({1, 2}),
+    }
+
+    def __init__(
+        self,
+        line_lengths: tuple[int, int, int],
+        lexicon: RhymeLookup,
+        rhyme_scheme: str | None = None,
+        forbid_isolated_level: bool = False,
+        allow_aojiu: bool = False,
+        forbid_three_same_ending: bool = False,
+    ):
+        if line_lengths not in {(5, 7, 5), (3, 5, 3)}:
+            raise ValueError(f"汉俳仅支持 5-7-5 或 3-5-3，收到: {line_lengths}")
+        normalized_scheme = rhyme_scheme.upper().strip() if rhyme_scheme else None
+        if normalized_scheme is not None and normalized_scheme not in self._RHYME_LINES:
+            raise ValueError(
+                f"汉俳押韵格式仅支持 AAA、ABA、BAA 或不押韵，收到: {rhyme_scheme}"
+            )
+
+        self.line_lengths = line_lengths
+        self.lexicon = lexicon
+        self.rhyme_scheme = normalized_scheme
+        self.forbid_isolated_level = forbid_isolated_level
+        self.allow_aojiu = allow_aojiu
+        self.forbid_three_same_ending = forbid_three_same_ending
+        self._rhyme_lines = self._RHYME_LINES.get(normalized_scheme, frozenset())
+        self._layout = GenerationLayout(
+            tuple(
+                LineLayout(
+                    length=length,
+                    break_positions=self._BREAKS[length],
+                    caesura_positions=self._BREAKS[length],
+                    stanza_index=index,
+                    line_in_stanza=0,
+                    stanza_end=True,
+                )
+                for index, length in enumerate(line_lengths)
+            )
+        )
+
+    @property
+    def layout(self) -> GenerationLayout:
+        return self._layout
+
+    @property
+    def rhyme_lines(self) -> frozenset[int]:
+        return self._rhyme_lines
+
+    def create_session(self) -> "HanpaiConstraintSession":
+        return HanpaiConstraintSession(
+            line_lengths=self.line_lengths,
+            lexicon=self.lexicon,
+            rhyme_lines=self._rhyme_lines,
+            forbid_isolated_level=self.forbid_isolated_level,
+            allow_aojiu=self.allow_aojiu,
+            forbid_three_same_ending=self.forbid_three_same_ending,
+        )
+
+
+class HanpaiConstraintSession(BaseConstraintSession):
+    def __init__(
+        self,
+        line_lengths: tuple[int, int, int],
+        lexicon: RhymeLookup,
+        rhyme_lines: frozenset[int],
+        forbid_isolated_level: bool,
+        allow_aojiu: bool,
+        forbid_three_same_ending: bool,
+    ):
+        self._line_lengths = line_lengths
+        self._lexicon = lexicon
+        self._rhyme_lines = rhyme_lines
+        self._forbid_isolated_level = forbid_isolated_level
+        self._allow_aojiu = allow_aojiu
+        self._forbid_three_same_ending = forbid_three_same_ending
+        self._locked_rhyme_parts: dict[str, set[str]] | None = None
+
+    @property
+    def locked_rhyme_parts(self) -> dict[str, frozenset[str]]:
+        return {
+            tone: frozenset(parts)
+            for tone, parts in (self._locked_rhyme_parts or {}).items()
+        }
+
+    def allowed_tones_at(self, state: GenerationState, position: int) -> tuple[str, ...]:
+        return ("平", "仄")
+
+    def rhyme_constraint(
+        self,
+        state: GenerationState,
+        pattern: str,
+    ) -> RhymeConstraint | None:
+        if state.line_index not in self._rhyme_lines:
+            return RhymeConstraint.none()
+        tone = pattern[-1]
+        if self._locked_rhyme_parts is None:
+            return RhymeConstraint.any(tone)
+        parts = self._locked_rhyme_parts.get(tone)
+        if not parts:
+            return None
+        return RhymeConstraint.specific(tone, parts)
+
+    def observe_text(self, state: GenerationState, text: str) -> None:
+        if state.line_index not in self._rhyme_lines:
+            return
+        if state.char_index + len(text) != self._line_lengths[state.line_index]:
+            return
+
+        last_char = text[-1]
+        found = {
+            tone: set(self._lexicon.get_rhyme_part_by_tone(last_char, tone))
+            for tone in self._lexicon.get_pingze(last_char)
+        }
+        found = {tone: parts for tone, parts in found.items() if parts}
+        if not found:
+            return
+        if self._locked_rhyme_parts is None:
+            self._locked_rhyme_parts = found
+            return
+
+        narrowed = {
+            tone: self._locked_rhyme_parts[tone].intersection(parts)
+            for tone, parts in found.items()
+            if tone in self._locked_rhyme_parts
+        }
+        narrowed = {tone: parts for tone, parts in narrowed.items() if parts}
+        if narrowed:
+            self._locked_rhyme_parts = narrowed
+
+    def candidate_context(self, state: GenerationState) -> HanpaiConstraintContext:
+        return HanpaiConstraintContext(
+            target_length=self._line_lengths[state.line_index],
+            forbid_isolated_level=self._forbid_isolated_level,
+            allow_aojiu=self._allow_aojiu,
+            forbid_three_same_ending=self._forbid_three_same_ending,
+        )
+
+
+@dataclass(frozen=True)
 class RelationalConstraintContext:
     current_line: int
     current_char_idx: int

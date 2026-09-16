@@ -45,6 +45,7 @@ class AppConfig:
     rhyme_dir: Path = Path("Rhyme")
     meter_source: Path = Path("Songci_Meter")
     output_dir: Path = Path("output")
+    boundary_coherence_penalty: float = 50.0
 
 
 def _load_model(model_config: ModelConfig):
@@ -94,6 +95,7 @@ def run(config: AppConfig) -> None:
         vocab=vocab,
         lexicon=lexicon,
         meter_source=config.meter_source,
+        boundary_coherence_penalty=config.boundary_coherence_penalty,
     )
     runtime = default_task_registry().create(config.task, task_context)
 
@@ -147,6 +149,7 @@ def run(config: AppConfig) -> None:
             output_ids[0][prompt_length:],
             skip_special_tokens=True,
         )
+        output = runtime.process_output(output)
         print("\n[生成结果]")
         print(output)
         if config.save_output:

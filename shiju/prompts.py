@@ -23,7 +23,23 @@ def _apply_thinking(messages: list[dict[str, str]], use_thinking: bool) -> list[
     return messages
 
 
-def _output_contract(title_prefix: str) -> str:
+def _output_contract(
+    title_prefix: str,
+    planning_instruction: str | None = None,
+    planning_label: str = "创作构思分析",
+    planning_marker: str | None = None,
+) -> str:
+    planning = planning_instruction or (
+        "请先分别从题旨立意、章法布局、意象选择、用典化用和用韵策略五方面进行散文分析，"
+        "每方面二至三句；分析中不得提前写出诗句或词句草稿。"
+    )
+    planning_step = f"1. 先输出{planning_label}。\n"
+    planning_example = ""
+    if planning_marker:
+        planning_step = (
+            f"1. 先输出{planning_label}，第一行必须以 {planning_marker} 开头。\n"
+        )
+        planning_example = f"{planning_marker}简短创作方向与安排\n"
     return (
         "你是一位擅长古典诗词创作的作者。\n\n"
         "创作时必须遵守以下优先级：\n"
@@ -31,20 +47,21 @@ def _output_contract(title_prefix: str) -> str:
         "2. 现代语义须转换为自然的古典表达，但不得省略人物、时间、事件、关切或情感。\n"
         "3. 正文须符合指定诗体、主题和古典诗词审美。\n"
         "4. 同时根据格律约束安排字词，不得为了格律省略核心叙事。\n\n"
-        "请先分别从题旨立意、章法布局、意象选择、用典化用和用韵策略五方面进行散文分析，"
-        "每方面二至三句；分析中不得提前写出诗句或词句草稿。\n\n"
+        f"{planning}\n\n"
         "必须按以下格式输出：\n"
-        "1. 先输出创作构思分析。\n"
-        "2. 分析结束后，严格按照下面的完整模板输出标题和正文：\n"
+        f"{planning_step}"
+        f"2. {planning_label}结束后，严格按照下面的完整模板输出标题和正文：\n"
         f"{TITLE_MARKER}{title_prefix}·作品名\n"
         f"{CONTENT_MARKER}正文\n\n"
         "完整格式示例：\n"
+        f"{planning_example}"
         f"{TITLE_MARKER}{title_prefix}·春思\n"
         f"{CONTENT_MARKER}柳色含烟……\n\n"
         f"标题中的“{title_prefix}”不可省略，也不得只输出作品名。"
         f"{TITLE_MARKER} 和 {CONTENT_MARKER} 两个标记均不可省略、修改或替换；"
         f"正文第一个字之前必须原样输出 {CONTENT_MARKER}。\n"
-        "不得输出格律说明、注释或其他额外文字。正文不得包含段落标记、"
+        "除前述创作构思或规划外，不得输出格律说明、注释或其他额外文字；"
+        "标题和正文之后不得输出任何额外内容。正文不得包含段落标记、"
         "序号、解释性文字或“平”“仄”“中”“/”等格律符号。"
     )
 
@@ -68,11 +85,11 @@ def _style_section(theme: str) -> str:
     )
 
 
-def _final_section(title_prefix: str) -> str:
+def _final_section(title_prefix: str, planning_label: str = "创作分析") -> str:
     return (
         "【最终要求】\n"
         "正文篇幅有限时，优先保证核心叙事完整，其次考虑意象、用典和辞藻。\n"
-        "请严格按创作分析、标题、正文的顺序输出。分析结束后必须紧接：\n"
+        f"请严格按{planning_label}、标题、正文的顺序输出。规划结束后必须紧接：\n"
         f"{TITLE_MARKER}{title_prefix}·作品名\n"
         f"{CONTENT_MARKER}正文\n"
         f"不得省略“{title_prefix}”，也不得省略或改写 {TITLE_MARKER}、{CONTENT_MARKER}。"
@@ -285,6 +302,134 @@ def build_relational_prompt(
                 line_length,
                 num_lines,
                 requirement,
+            ),
+        },
+    ]
+    return _apply_thinking(messages, use_thinking)
+
+
+def build_hanpai_prompt(
+    task_type: str,
+    form_name: str,
+    theme: str,
+    line_lengths: tuple[int, int, int],
+    requirement: str = "",
+    use_thinking: bool = True,
+    rhyme_dict_name: str = "Xinyun",
+    season_word: str | None = None,
+    season_words: tuple[str, ...] = (),
+    season: str | None = None,
+    forbid_isolated_level: bool = False,
+    allow_aojiu: bool = False,
+    forbid_three_same_ending: bool = False,
+    rhyme_scheme: str | None = None,
+) -> list[dict[str, str]]:
+    if task_type != "instruction":
+        raise ValueError(f"汉俳当前只支持 instruction，收到: {task_type}")
+
+    pattern = "-".join(str(length) for length in line_lengths)
+    rhyme_name = RHYME_NAMES.get(rhyme_dict_name, rhyme_dict_name)
+    season_inputs = (season_word is not None, bool(season_words), season is not None)
+    if sum(season_inputs) > 1:
+        raise ValueError("季语、候选季语和季节只能配置其中一种")
+    if season_word is not None:
+        season_rule = (
+            f"必须在正文中原样、自然地使用指定季语“{season_word.strip()}”，"
+            "不得只在标题或创作分析中提及。"
+        )
+    elif season_words:
+        candidates = "、".join(f"“{word.strip()}”" for word in season_words)
+        season_rule = (
+            f"必须且只能从候选季语 {candidates} 中选择一个，并在正文中原样、"
+            "自然地使用；不得只在标题或创作分析中提及。"
+        )
+    elif season is not None:
+        season_rule = (
+            f"指定季节为“{season.strip()}”。必须在正文中使用一个无需解释即可明显指向"
+            "该季节的具体季语或季节意象，不得只写季节名称代替具体意象。"
+        )
+    else:
+        season_rule = (
+            "未指定季语或季节，但正文仍必须自行选择并使用一个明显、具体的季语或"
+            "季节意象。"
+        )
+    season_rule += (
+        "读者必须仅凭正文即可判断相应季节；未加时令限定的云、月、风、雨、柳等"
+        "一般景物不视为明显季语。"
+    )
+
+    prosody_rules = []
+    if forbid_isolated_level:
+        if allow_aojiu:
+            prosody_rules.append("禁止未获补救的孤平，允许使用邻位平声完成拗救")
+        else:
+            prosody_rules.append("禁止孤平")
+    elif allow_aojiu:
+        prosody_rules.append("允许自然使用拗救，但不强制安排")
+    if forbid_three_same_ending:
+        prosody_rules.append("每行句尾不得出现三连平或三连仄")
+    prosody_text = "；".join(prosody_rules) if prosody_rules else "不额外限定平仄格律"
+
+    normalized_scheme = rhyme_scheme.upper().strip() if rhyme_scheme else None
+    rhyme_descriptions = {
+        "AAA": "三行句尾均押同一韵部",
+        "ABA": "第一、三行句尾押同一韵部，第二行不押",
+        "BAA": "第二、三行句尾押同一韵部，第一行不押",
+    }
+    if normalized_scheme and normalized_scheme not in rhyme_descriptions:
+        raise ValueError(
+            f"汉俳押韵格式仅支持 AAA、ABA、BAA 或不押韵，收到: {rhyme_scheme}"
+        )
+    if normalized_scheme:
+        rhyme_text = (
+            f"采用 {normalized_scheme} 式：{rhyme_descriptions[normalized_scheme]}；"
+            f"依据{rhyme_name}，首个押韵句确定声调和韵部，后续不得换韵。"
+        )
+    else:
+        rhyme_text = "不设置押韵要求。"
+
+    rules = (
+        "【汉俳规则】\n"
+        f"- 格式：{pattern}，正文恰好三行，依次为"
+        f"{line_lengths[0]}字、{line_lengths[1]}字、{line_lengths[2]}字\n"
+        "- 句读：五字句严格按 2/3 划分，七字句严格按 2/2/3 划分；"
+        "每个节奏段必须独立成意，不得把一个词拆到边界两侧。生成过程中程序会在边界"
+        "临时插入顿号以提示节奏，最终输出会自动移除这些顿号\n"
+        "- 行间只换行，行尾不输出逗号、句号等标点\n"
+        f"- 季语：{season_rule}\n"
+        f"- 格律：{prosody_text}\n"
+        f"- 押韵：{rhyme_text}\n"
+        "- 语言凝练，三行须共同构成一次完整的观察、转折或余韵"
+    )
+    planning_instruction = (
+        "汉俳正式写作前，先输出一小段简短的创作规划，控制在 2 至 4 句：说明核心叙事"
+        "如何分配到三行、准备使用的明显季语或季节意象、情景推进方式，以及押韵和格律的"
+        "取舍。这段规划必须作为可见答案输出并以 [plan] 开头，不能放进 <think> 标签。"
+        "规划只写创作方向，不要展开逐步思维链，不要提前写出完整诗句、分句或格律符号。"
+    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "你是一位擅长汉俳创作的诗人，能够在极短篇幅中凝聚具体景象与情感。\n\n"
+                + _output_contract(
+                    form_name,
+                    planning_instruction,
+                    "创作规划",
+                    "[plan]",
+                )
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "【创作形式】\n"
+                f"诗体：{form_name}\n"
+                f"篇幅：{pattern}\n\n"
+                f"{_narrative_section(requirement)}\n\n"
+                f"{_style_section(theme)}\n\n"
+                f"{rules}\n\n"
+                f"{_final_section(form_name, '创作规划')}"
             ),
         },
     ]

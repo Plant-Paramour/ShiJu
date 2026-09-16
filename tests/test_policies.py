@@ -48,7 +48,7 @@ def test_common_boundary_policy_penalizes_known_bigram():
     lexicon = FakeLexicon()
     vocab = FakeVocab(tokenizer, lexicon)
     context = _context()
-    policy = BoundaryCoherencePolicy(frozenset({"山雨"}))
+    policy = BoundaryCoherencePolicy(frozenset({"山雨"}), penalty=50.0)
     assert policy.evaluate(3, context) == 50.0
 
 

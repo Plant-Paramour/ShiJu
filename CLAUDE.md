@@ -6,10 +6,10 @@
 
 当前仓库只保留核心生成链路，支持两种约束来源：
 
-- 字间规则约束型：当前用于五言、七言绝句和律诗，通过二四六分明、句尾平仄、押韵、孤平和三连同等规则动态计算约束。
+- 字间规则约束型：当前用于五言、七言绝句和律诗，以及 5-7-5、3-5-3 汉俳。唐诗通过二四六分明、句尾平仄、押韵、孤平和三连同等规则动态计算约束；汉俳按任务配置组合孤平、拗救、三连同和押韵规则。
 - 格律模板严格约束型：当前用于宋词，从 `Songci_Meter/*.json` 读取逐字平仄、句读、阕结构和韵组。
 
-俳句、排律、骈文、曲牌和歌词尚未接入。
+排律、骈文、曲牌和歌词尚未接入。
 
 ## 当前结构
 
@@ -56,6 +56,32 @@ pytest
 ```
 
 `main.py` 中保留模型路径、量化、诗体、主题、采样参数和输出设置。`one-shot` 与 `completion` Prompt 仍需要仓库外部的 `PoeTone-main/data/cipai_data.json`，当前仓库不提供该数据，因此不是自包含工作流。
+
+汉俳通过 `TaskRequest(meter_type="汉俳", ...)` 接入，并使用 `HanpaiOptions` 配置：
+
+```python
+from shiju.tasks import HanpaiOptions, TaskRequest
+
+TaskRequest(
+    meter_type="汉俳",
+    form_name="汉俳",
+    theme="初秋离别",
+    rhyme_dict_name="Xinyun",
+    use_thinking=False,           # 启用 /no_think，无模型思考过程
+    hanpai=HanpaiOptions(
+        line_pattern="5-7-5",       # 或 3-5-3
+        season_word="寒蝉",          # 指定一个季语
+        season_words=(),             # 或提供多个候选，由模型选择一个
+        season=None,                 # 或只指定季节；三者均不填时自动选择明显季语
+        forbid_isolated_level=True,
+        allow_aojiu=True,
+        forbid_three_same_ending=True,
+        rhyme_scheme="ABA",         # AAA、ABA、BAA 或 None
+    ),
+)
+```
+
+汉俳正文固定输出三行，行间只换行。五字句按 2/3、七字句按 2/2/3 设置 token 跨界限制；生成时在内部句读处强制插入临时顿号，让模型明确感知节奏段，保存结果前自动移除。正文始终必须包含明显季语；未选择的平仄格律与押韵规则不会被解码器隐式启用。
 
 依赖文件：
 

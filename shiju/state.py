@@ -123,10 +123,14 @@ class GenerationController:
 
     def allowed_patterns(self, max_length: int = 4) -> Sequence[AllowedPattern]:
         state = self.snapshot()
-        limit = min(max_length, self._state_machine.remaining_before_boundary())
+        limit = min(max_length, self.remaining_before_boundary())
         if limit <= 0:
             return ()
         return self._session.allowed_patterns(state, limit)
+
+    def remaining_before_boundary(self) -> int:
+        """返回当前位置到下一句读、顿号或行尾之间可生成的汉字数。"""
+        return self._state_machine.remaining_before_boundary()
 
     def candidate_context(self) -> Any:
         return self._session.candidate_context(self.snapshot())

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from shiju.app import AppConfig, ModelConfig, SamplingConfig, run
-from shiju.tasks import TaskRequest
+from shiju.tasks import HanpaiOptions, TaskRequest
 
 
 def main() -> None:
@@ -11,13 +11,20 @@ def main() -> None:
             quantization="4bit",
         ),
         task=TaskRequest(
-            meter_type="宋词",
+            meter_type="汉俳",
+            form_name="汉俳",
+            theme="初秋离别",
             rhyme_dict_name="Xinyun",
-            task_type="instruction",
-            theme="婉约相思",
-            form_name="浣溪沙",
-            requirement="学姐毕业一年，探问工作情况如何，生活如何。委婉表达思念和倾慕。",
             use_thinking=False,
+            requirement="学姐毕业一年，探问工作情况如何，生活如何。极为**委婉**地表达思念和倾慕。",
+            hanpai=HanpaiOptions(
+                line_pattern="5-7-5",
+                season="红叶",
+                forbid_isolated_level=True,
+                allow_aojiu=True,
+                forbid_three_same_ending=True,
+                rhyme_scheme="ABA",
+            ),
         ),
         sampling=SamplingConfig(
             temperature=0.7,
@@ -31,6 +38,7 @@ def main() -> None:
         rhyme_dir=Path("Rhyme"),
         meter_source=Path("Songci_Meter"),
         output_dir=Path("output"),
+        boundary_coherence_penalty=50.0,
     )
     run(config)
 
