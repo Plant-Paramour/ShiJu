@@ -41,8 +41,11 @@ def test_template_task_reuses_resolved_default_variant_in_prompt():
 
     runtime = default_task_registry().create(request, context)
     prompt = "\n".join(message["content"] for message in runtime.messages)
+    output_template = "[title]浣溪沙·作品名\n[content]正文"
 
     assert runtime.profile.template.variant_name == "韩偓"
     assert "采用变体：韩偓" in prompt
-    assert "[title]浣溪沙·标题" in prompt
-    assert "[content]正文" in prompt
+    assert output_template in runtime.messages[0]["content"]
+    assert output_template in runtime.messages[-1]["content"]
+    assert "[title]浣溪沙·春思\n[content]柳色含烟" in prompt
+    assert "两个标记均不可省略、修改或替换" in prompt
