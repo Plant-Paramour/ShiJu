@@ -60,21 +60,28 @@ pytest
 汉俳通过 `TaskRequest(meter_type="汉俳", ...)` 接入，并使用 `HanpaiOptions` 配置：
 
 ```python
-from shiju.tasks import HanpaiOptions
+from shiju.tasks import HanpaiOptions, TaskRequest
 
-HanpaiOptions(
-    line_pattern="5-7-5",       # 或 3-5-3
-    season_word="寒蝉",          # 指定一个季语
-    season_words=(),             # 或提供多个候选，由模型选择一个
-    season=None,                 # 或只指定季节；三者均不填时自动选择明显季语
-    forbid_isolated_level=True,
-    allow_aojiu=True,
-    forbid_three_same_ending=True,
-    rhyme_scheme="ABA",         # AAA、ABA、BAA 或 None
+TaskRequest(
+    meter_type="汉俳",
+    form_name="汉俳",
+    theme="初秋离别",
+    rhyme_dict_name="Xinyun",
+    use_thinking=False,           # 启用 /no_think，无模型思考过程
+    hanpai=HanpaiOptions(
+        line_pattern="5-7-5",       # 或 3-5-3
+        season_word="寒蝉",          # 指定一个季语
+        season_words=(),             # 或提供多个候选，由模型选择一个
+        season=None,                 # 或只指定季节；三者均不填时自动选择明显季语
+        forbid_isolated_level=True,
+        allow_aojiu=True,
+        forbid_three_same_ending=True,
+        rhyme_scheme="ABA",         # AAA、ABA、BAA 或 None
+    ),
 )
 ```
 
-汉俳正文固定输出三行，行间只换行。五字句按 2/3、七字句按 2/2/3 设置与唐诗相同的 token 跨界限制和粘连惩罚。正文始终必须包含明显季语；未选择的平仄格律与押韵规则不会被解码器隐式启用。
+汉俳正文固定输出三行，行间只换行。五字句按 2/3、七字句按 2/2/3 设置 token 跨界限制；生成时在内部句读处强制插入临时顿号，让模型明确感知节奏段，保存结果前自动移除。正文始终必须包含明显季语；未选择的平仄格律与押韵规则不会被解码器隐式启用。
 
 依赖文件：
 

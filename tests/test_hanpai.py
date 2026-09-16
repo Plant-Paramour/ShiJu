@@ -1,13 +1,28 @@
 import pytest
+import torch
 
 from shiju.constraints import HanpaiConstraintProfile
 from shiju.domain import RhymeMode, StepKind
-from shiju.policies import BoundaryCoherencePolicy, CandidateContext, HanpaiVerifierPolicy
-from shiju.processor import NewlineSeparatorPolicy
+from shiju.policies import (
+    BoundaryCoherencePolicy,
+    CandidateContext,
+    HanpaiVerifierPolicy,
+    PolicyTier,
+)
+from shiju.processor import ConstrainedLogitsProcessor, NewlineSeparatorPolicy, ProcessorConfig
 from shiju.prompts import build_hanpai_prompt
 from shiju.state import GenerationController, GenerationStateMachine
 
 from conftest import FakeLexicon, FakeTokenizer, FakeVocab
+
+
+def _advance_hanpai_text(controller, text):
+    for char in text:
+        if controller.snapshot().step is StepKind.CAESURA:
+            controller.advance("、")
+        controller.advance(char)
+    if controller.snapshot().step is StepKind.CAESURA:
+        controller.advance("、")
 
 
 @pytest.mark.parametrize(
@@ -24,6 +39,9 @@ def test_hanpai_profile_supports_both_line_patterns(line_lengths, expected_break
     assert [set(line.break_positions) for line in profile.layout.lines] == list(
         expected_breaks
     )
+    assert [set(line.caesura_positions) for line in profile.layout.lines] == list(
+        expected_breaks
+    )
     assert all(line.stanza_end for line in profile.layout.lines)
 
 
@@ -37,13 +55,125 @@ def test_hanpai_candidate_patterns_cannot_cross_five_and_seven_char_breaks():
 
     assert {item.length for item in controller.allowed_patterns()} == {1, 2}
     controller.advance("山雨")
+    assert controller.snapshot().step is StepKind.CAESURA
+    controller.advance("、")
     assert {item.length for item in controller.allowed_patterns()} == {1, 2, 3}
     controller.advance("山雨山\n")
     assert {item.length for item in controller.allowed_patterns()} == {1, 2}
     controller.advance("山雨")
+    assert controller.snapshot().step is StepKind.CAESURA
+    controller.advance("、")
     assert {item.length for item in controller.allowed_patterns()} == {1, 2}
     controller.advance("山雨")
+    assert controller.snapshot().step is StepKind.CAESURA
+    controller.advance("、")
     assert {item.length for item in controller.allowed_patterns()} == {1, 2, 3}
+
+
+@pytest.mark.parametrize(
+    ("position", "expected_lengths"),
+    [
+        (0, {1, 2}),
+        (1, {1}),
+        (2, {1, 2, 3}),
+        (3, {1, 2}),
+        (4, {1}),
+    ],
+)
+def test_hanpai_five_char_line_limits_tokens_to_next_break(
+    position,
+    expected_lengths,
+):
+    lexicon = FakeLexicon()
+    profile = HanpaiConstraintProfile((5, 7, 5), lexicon)
+    controller = GenerationController(
+        GenerationStateMachine(profile.layout),
+        profile.create_session(),
+    )
+    _advance_hanpai_text(controller, "山" * position)
+
+    assert controller.remaining_before_boundary() == max(expected_lengths)
+    assert {item.length for item in controller.allowed_patterns()} == expected_lengths
+
+
+@pytest.mark.parametrize(
+    ("position", "expected_lengths"),
+    [
+        (0, {1, 2}),
+        (1, {1}),
+        (2, {1, 2}),
+        (3, {1}),
+        (4, {1, 2, 3}),
+        (5, {1, 2}),
+        (6, {1}),
+    ],
+)
+def test_hanpai_seven_char_line_limits_tokens_to_next_break(
+    position,
+    expected_lengths,
+):
+    lexicon = FakeLexicon()
+    profile = HanpaiConstraintProfile((5, 7, 5), lexicon)
+    controller = GenerationController(
+        GenerationStateMachine(profile.layout),
+        profile.create_session(),
+    )
+    _advance_hanpai_text(controller, "山雨山雨山\n" + "山" * position)
+
+    assert controller.remaining_before_boundary() == max(expected_lengths)
+    assert {item.length for item in controller.allowed_patterns()} == expected_lengths
+
+
+def test_hanpai_processor_rejects_token_longer_than_current_segment():
+    class BoundaryLeakingVocab(FakeVocab):
+        def resolve_patterns(self, patterns, ignore_rhyme=False):
+            return {2, 20}
+
+    tokenizer = FakeTokenizer({20: "山雨"})
+    lexicon = FakeLexicon()
+    vocab = BoundaryLeakingVocab(tokenizer, lexicon)
+    profile = HanpaiConstraintProfile((5, 7, 5), lexicon)
+    controller = GenerationController(
+        GenerationStateMachine(profile.layout),
+        profile.create_session(),
+    )
+    processor = ConstrainedLogitsProcessor(
+        vocab=vocab,
+        controller=controller,
+        tokenizer=tokenizer,
+        input_prompt_len=0,
+        separator_policy=NewlineSeparatorPolicy(tokenizer),
+        policy_tiers=(PolicyTier("base", ()),),
+        config=ProcessorConfig(),
+    )
+    scores = torch.arange(21, dtype=torch.float32).unsqueeze(0)
+
+    result = processor(torch.tensor([[1, 2]]), scores)
+    finite = set(torch.where(torch.isfinite(result[0]))[0].tolist())
+
+    assert controller.snapshot().char_index == 1
+    assert controller.remaining_before_boundary() == 1
+    assert finite == {2}
+
+
+def test_hanpai_verifier_rejects_token_crossing_break_as_second_guard():
+    tokenizer = FakeTokenizer({20: "山雨"})
+    lexicon = FakeLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    profile = HanpaiConstraintProfile((5, 7, 5), lexicon)
+    controller = GenerationController(
+        GenerationStateMachine(profile.layout),
+        profile.create_session(),
+    )
+    controller.advance("山")
+    context = CandidateContext(
+        state=controller.snapshot(),
+        constraint=controller.candidate_context(),
+        tokenizer=tokenizer,
+        vocab=vocab,
+    )
+
+    assert HanpaiVerifierPolicy(lexicon).evaluate(20, context) is None
 
 
 def test_hanpai_uses_the_shared_boundary_coherence_penalty():
@@ -63,7 +193,7 @@ def test_hanpai_uses_the_shared_boundary_coherence_penalty():
         vocab=vocab,
     )
 
-    policy = BoundaryCoherencePolicy(vocab.common_bigrams())
+    policy = BoundaryCoherencePolicy(vocab.common_bigrams(), penalty=50.0)
 
     assert policy.evaluate(2, context) == 50.0
 
@@ -89,9 +219,9 @@ def test_hanpai_aba_locks_first_and_third_line_rhyme():
     session = profile.create_session()
     controller = GenerationController(GenerationStateMachine(profile.layout), session)
 
-    controller.advance("雨雨山\n")
+    _advance_hanpai_text(controller, "雨雨山\n")
     assert session.locked_rhyme_parts == {"平": frozenset({"一"})}
-    controller.advance("山雨山雨雨\n雨雨")
+    _advance_hanpai_text(controller, "山雨山雨雨\n雨雨")
     final_patterns = controller.allowed_patterns(max_length=1)
 
     assert controller.snapshot().line_index == 2
@@ -116,6 +246,25 @@ def test_hanpai_forces_a_newline_after_each_line():
 
     assert state.step is StepKind.NEWLINE
     assert separator.allowed_tokens(state, controller.candidate_context()) == {6}
+
+
+def test_hanpai_forces_temporary_caesuras_at_internal_breaks():
+    tokenizer = FakeTokenizer()
+    lexicon = FakeLexicon()
+    profile = HanpaiConstraintProfile((5, 7, 5), lexicon)
+    controller = GenerationController(
+        GenerationStateMachine(profile.layout),
+        profile.create_session(),
+    )
+    controller.advance("山雨")
+
+    state = controller.snapshot()
+    separator = NewlineSeparatorPolicy(tokenizer)
+
+    assert state.step is StepKind.CAESURA
+    assert separator.allowed_tokens(state, controller.candidate_context()) == {7}
+    controller.advance("、")
+    assert controller.remaining_before_boundary() == 3
 
 
 def test_hanpai_rejects_unknown_format_and_rhyme_scheme():
@@ -158,6 +307,31 @@ def test_hanpai_rejects_three_same_tones_at_line_end_when_enabled():
     policy, context = _policy_context("山春风", info)
 
     assert policy.evaluate(20, context) is None
+
+
+def test_hanpai_rejects_if_any_polyphonic_interpretation_is_three_same():
+    from shiju.constraints import HanpaiConstraintContext
+
+    class PolyphonicLexicon(FakeLexicon):
+        def __init__(self):
+            super().__init__()
+            self.tones["重"] = ["平", "仄"]
+            self.parts["重"] = ["一"]
+
+    lexicon = PolyphonicLexicon()
+    tokenizer = FakeTokenizer({20: "重重重"})
+    vocab = FakeVocab(tokenizer, lexicon)
+    state = GenerationStateMachine(
+        HanpaiConstraintProfile((3, 5, 3), lexicon).layout
+    ).snapshot()
+    context = CandidateContext(
+        state,
+        HanpaiConstraintContext(3, False, False, True),
+        tokenizer,
+        vocab,
+    )
+
+    assert HanpaiVerifierPolicy(lexicon).evaluate(20, context) is None
 
 
 def test_hanpai_aojiu_can_rescue_an_isolated_level_tone():
@@ -213,6 +387,36 @@ def test_hanpai_prompt_supports_all_season_input_modes(season_options, expected)
 
     assert expected in prompt
     assert "未加时令限定的云、月、风、雨、柳等一般景物不视为明显季语" in prompt
+
+
+def test_hanpai_prompt_can_disable_model_thinking():
+    messages = build_hanpai_prompt(
+        task_type="instruction",
+        form_name="汉俳",
+        theme="秋夜",
+        line_lengths=(5, 7, 5),
+        use_thinking=False,
+    )
+
+    assert messages[0]["content"].startswith("你是一位")
+    assert messages[1]["content"].startswith("/no_think ")
+
+
+def test_hanpai_prompt_requires_a_short_creation_plan_before_output():
+    messages = build_hanpai_prompt(
+        task_type="instruction",
+        form_name="汉俳",
+        theme="秋夜",
+        line_lengths=(5, 7, 5),
+    )
+    system_prompt = messages[0]["content"]
+
+    assert "先输出一小段简短的创作规划" in system_prompt
+    assert "控制在 2 至 4 句" in system_prompt
+    assert "必须作为可见答案输出并以 [plan] 开头" in system_prompt
+    assert "[plan]简短创作方向与安排" in system_prompt
+    assert "不要展开逐步思维链" in system_prompt
+    assert "不要提前写出完整诗句、分句或格律符号" in system_prompt
 
 
 def test_hanpai_season_input_modes_are_mutually_exclusive():

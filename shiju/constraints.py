@@ -183,6 +183,7 @@ class HanpaiConstraintProfile:
                 LineLayout(
                     length=length,
                     break_positions=self._BREAKS[length],
+                    caesura_positions=self._BREAKS[length],
                     stanza_index=index,
                     line_in_stanza=0,
                     stanza_end=True,

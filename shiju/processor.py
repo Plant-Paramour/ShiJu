@@ -103,16 +103,19 @@ class RelationalSeparatorPolicy:
 
 
 class NewlineSeparatorPolicy:
-    """用于每行按固定字数结束、行间只换行的诗体。"""
+    """用于内部强制顿号、行间只换行的诗体。"""
 
     def __init__(self, tokenizer: TokenizerLike):
         self._newline = _exact_token_ids(tokenizer, ("\n",))
+        self._caesura = _exact_token_ids(tokenizer, ("、",))
 
     @property
     def newline_tokens(self) -> set[int]:
         return set(self._newline)
 
     def allowed_tokens(self, state: GenerationState, constraint_context) -> set[int]:
+        if state.step is StepKind.CAESURA:
+            return set(self._caesura)
         if state.step is StepKind.NEWLINE:
             return set(self._newline)
         return set()
@@ -191,10 +194,10 @@ class ConstrainedLogitsProcessor(LogitsProcessor):
         patterns = self._controller.allowed_patterns()
         allowed_ids = self._vocab.resolve_patterns(patterns)
         vocab_size = scores.shape[1]
-        allowed_ids = {token_id for token_id in allowed_ids if 0 <= token_id < vocab_size}
+        allowed_ids = self._limit_to_current_segment(allowed_ids, vocab_size)
         if not allowed_ids and self._config.relax_rhyme_on_empty:
             allowed_ids = self._vocab.resolve_patterns(patterns, ignore_rhyme=True)
-            allowed_ids = {token_id for token_id in allowed_ids if 0 <= token_id < vocab_size}
+            allowed_ids = self._limit_to_current_segment(allowed_ids, vocab_size)
         if not allowed_ids:
             if self._config.raw_on_no_candidates:
                 result = scores.clone()
@@ -225,6 +228,21 @@ class ConstrainedLogitsProcessor(LogitsProcessor):
         if self._config.raw_after_policy_failure:
             return scores
         return self._only_tokens(scores, {self._eos_token_id})
+
+    def _limit_to_current_segment(
+        self,
+        token_ids: set[int],
+        vocab_size: int,
+    ) -> set[int]:
+        max_characters = self._controller.remaining_before_boundary()
+        if max_characters <= 0:
+            return set()
+        return {
+            token_id
+            for token_id in token_ids
+            if 0 <= token_id < vocab_size
+            and 0 < len(self._vocab.text_for_token(token_id)) <= max_characters
+        }
 
     def _track_content(self, raw_text: str) -> bool:
         if not self._has_started_content:

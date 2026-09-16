@@ -38,6 +38,7 @@ def main() -> None:
         rhyme_dir=Path("Rhyme"),
         meter_source=Path("Songci_Meter"),
         output_dir=Path("output"),
+        boundary_coherence_penalty=50.0,
     )
     run(config)
 
