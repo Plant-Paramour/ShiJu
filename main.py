@@ -15,10 +15,11 @@ def main() -> None:
             form_name="汉俳",
             theme="初秋离别",
             rhyme_dict_name="Xinyun",
+            use_thinking=False,
             requirement="学姐毕业一年，探问工作情况如何，生活如何。极为**委婉**地表达思念和倾慕。",
             hanpai=HanpaiOptions(
                 line_pattern="5-7-5",
-                season="初秋",
+                season="红叶",
                 forbid_isolated_level=True,
                 allow_aojiu=True,
                 forbid_three_same_ending=True,
