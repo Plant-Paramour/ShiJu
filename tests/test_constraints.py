@@ -67,3 +67,26 @@ def test_relational_first_line_oblique_end_excludes_its_rhyme_parts():
 
     assert info.line0_rhymes is False
     assert info.excluded_rhyme_parts == frozenset({"四"})
+
+
+def test_relational_session_repeats_dual_and_sticky_pattern_for_pailv():
+    lexicon = FakeLexicon()
+    profile = RelationalConstraintProfile(5, 12, "平韵", lexicon)
+    assert len(profile.layout.lines) == 12
+
+    session = profile.create_session()
+    controller = GenerationController(GenerationStateMachine(profile.layout), session)
+    controller.advance("山雨")
+    first_base = controller.candidate_context().base_tone
+
+    controller.advance("山雨山，")
+    assert controller.snapshot().line_index == 1
+    assert controller.candidate_context().base_tone == 1 - first_base
+
+    controller.advance("山雨山雨山。")
+    assert controller.snapshot().line_index == 2
+    assert controller.candidate_context().base_tone == 1 - first_base
+
+    controller.advance("山雨山雨山，山雨山雨山。")
+    assert controller.snapshot().line_index == 4
+    assert controller.candidate_context().base_tone == first_base

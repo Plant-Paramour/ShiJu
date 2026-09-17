@@ -314,7 +314,7 @@ class RelationalConstraintContext:
 
 
 class RelationalConstraintProfile:
-    """当前唐诗使用的字间关系规则配置。"""
+    """关系型诗体的字间规则配置。"""
 
     def __init__(
         self,
@@ -322,15 +322,20 @@ class RelationalConstraintProfile:
         num_lines: int,
         rhyme_type: str,
         lexicon: RhymeLookup,
+        allow_aojiu: bool = False,
     ):
         if line_length not in (5, 7):
             raise ValueError(f"唐诗仅支持五言(5)或七言(7)，收到: {line_length}")
-        if num_lines not in (4, 8):
-            raise ValueError(f"唐诗仅支持绝句(4)或律诗(8)，收到: {num_lines}")
+        if num_lines not in (4, 8) and not (num_lines >= 10 and num_lines % 2 == 0):
+            raise ValueError(
+                "关系型诗体句数必须为 4、8，或排律的至少十句偶数，"
+                f"收到: {num_lines}"
+            )
         self.line_length = line_length
         self.num_lines = num_lines
         self.rhyme_type = rhyme_type.strip()
         self.lexicon = lexicon
+        self.allow_aojiu = allow_aojiu
         breaks = frozenset({2} if line_length == 5 else {2, 4})
         self._layout = GenerationLayout(
             tuple(
@@ -355,6 +360,7 @@ class RelationalConstraintProfile:
             num_lines=self.num_lines,
             rhyme_type=self.rhyme_type,
             lexicon=self.lexicon,
+            allow_aojiu=self.allow_aojiu,
         )
 
 
@@ -365,11 +371,13 @@ class RelationalConstraintSession(BaseConstraintSession):
         num_lines: int,
         rhyme_type: str,
         lexicon: RhymeLookup,
+        allow_aojiu: bool = False,
     ):
         self._line_length = line_length
         self._num_lines = num_lines
         self._rhyme_type = rhyme_type
         self._lexicon = lexicon
+        self._allow_aojiu = allow_aojiu
         self._locked_rhyme_parts: set[str] | None = None
         self._excluded_rhyme_parts: set[str] | None = None
         self._global_base_tone = 2
@@ -383,7 +391,7 @@ class RelationalConstraintSession(BaseConstraintSession):
         self._active_line = line_index
         if self._global_base_tone == 2:
             self._current_base_tone = 2
-        elif line_index in (1, 2, 5, 6):
+        elif line_index % 4 in (1, 2):
             self._current_base_tone = 1 - self._global_base_tone
         else:
             self._current_base_tone = self._global_base_tone
@@ -397,6 +405,11 @@ class RelationalConstraintSession(BaseConstraintSession):
         self._ensure_line(state.line_index)
         base = self._current_base_tone
         if base == 2:
+            return ("平", "仄")
+        if self._allow_aojiu and (
+            (position == 3 and base == 0)
+            or (position == 5 and base == 1 and self._line_length >= 7)
+        ):
             return ("平", "仄")
         if position == 1 or (position == 5 and self._line_length >= 7):
             return ("平",) if base == 0 else ("仄",)

@@ -147,13 +147,23 @@ class HanpaiVerifierPolicy:
 
 
 class TangVerifierPolicy:
-    """唐诗 poem_verifier 风格规则；mode=critical 时只保留核心格律底线。"""
+    """关系型诗体的格律校验；mode=critical 时只保留核心格律底线。"""
 
-    def __init__(self, lexicon: RhymeLookup, mode: str = "full"):
+    def __init__(
+        self,
+        lexicon: RhymeLookup,
+        mode: str = "full",
+        allow_aojiu: bool = False,
+        enforce_style: bool = True,
+        reject_ambiguous_three_same: bool = False,
+    ):
         if mode not in {"full", "critical"}:
             raise ValueError(f"未知唐诗校验模式: {mode}")
         self._lexicon = lexicon
         self._mode = mode
+        self._allow_aojiu = allow_aojiu
+        self._enforce_style = enforce_style
+        self._reject_ambiguous_three_same = reject_ambiguous_three_same
 
     def evaluate(self, token_id: int, context: CandidateContext) -> float | None:
         relational = context.constraint
@@ -175,7 +185,9 @@ class TangVerifierPolicy:
         if candidate is None:
             return None
         token_chars = candidate.text
-        if any(char in {"的", "些", "么", "了"} for char in token_chars):
+        if self._enforce_style and any(
+            char in {"的", "些", "么", "了"} for char in token_chars
+        ):
             return None
 
         state = context.state
@@ -189,9 +201,15 @@ class TangVerifierPolicy:
 
         line_tone = self._resolve_line_tone(info.base_tone, simulated, state.current_line_text)
         end_tone = self._end_tone(info)
-        if not self._check_even_positions(simulated, line_tone):
+        if not self._check_even_positions(simulated, line_tone, target_length):
             return None
-        if not self._check_prevent_three_same(simulated, target_length, end_tone):
+        if not self._check_prevent_isolated_level(
+            simulated, target_length, end_tone, line_tone
+        ):
+            return None
+        if not self._check_prevent_three_same(
+            simulated, target_length, end_tone, line_tone
+        ):
             return None
         if len(simulated) == target_length:
             if has_three_same_ending(simulated, self._lexicon):
@@ -200,16 +218,21 @@ class TangVerifierPolicy:
                 return None
             if not self._check_end_tone(simulated[-1], end_tone):
                 return None
-            if not self._check_end_character(simulated[-1], state, target_length):
+            if self._enforce_style and not self._check_end_character(
+                simulated[-1], state, target_length
+            ):
                 return None
             if not self._check_rhyme(simulated[-1], info):
                 return None
 
-        penalty = self._repetition_penalty(token_chars, state)
-        if penalty is None:
-            return None
-        if not self._check_ngrams(token_chars, state):
-            return None
+        penalty = 0.0
+        if self._enforce_style:
+            repetition_penalty = self._repetition_penalty(token_chars, state)
+            if repetition_penalty is None:
+                return None
+            if not self._check_ngrams(token_chars, state):
+                return None
+            penalty = repetition_penalty
         if any(not self._lexicon.get_pingze(char) for char in token_chars):
             return None
         return penalty
@@ -234,9 +257,15 @@ class TangVerifierPolicy:
             return None
         line_tone = self._resolve_line_tone(info.base_tone, simulated, state.current_line_text)
         end_tone = self._end_tone(info)
-        if not self._check_even_positions(simulated, line_tone):
+        if not self._check_even_positions(simulated, line_tone, info.target_length):
             return None
-        if not self._check_prevent_three_same(simulated, info.target_length, end_tone):
+        if not self._check_prevent_isolated_level(
+            simulated, info.target_length, end_tone, line_tone
+        ):
+            return None
+        if not self._check_prevent_three_same(
+            simulated, info.target_length, end_tone, line_tone
+        ):
             return None
         if len(simulated) == info.target_length:
             if has_three_same_ending(simulated, self._lexicon):
@@ -265,7 +294,7 @@ class TangVerifierPolicy:
             return 2
         return 1 if "平" in info.rhyme_type else 0
 
-    def _check_even_positions(self, line: str, line_tone: int) -> bool:
+    def _check_even_positions(self, line: str, line_tone: int, target_length: int) -> bool:
         checks = ((1, line_tone), (3, 1 - line_tone if line_tone != 2 else 2), (5, line_tone))
         for position, expected_value in checks:
             if position >= len(line) or expected_value == 2:
@@ -274,19 +303,95 @@ class TangVerifierPolicy:
             if len(tones) == 1:
                 expected = "平" if expected_value == 0 else "仄"
                 if tones[0] != expected:
+                    if self._is_aojiu_position(line, line_tone, position, target_length):
+                        continue
                     return False
         return True
 
-    def _check_prevent_three_same(self, line: str, target: int, end_tone: int) -> bool:
+    def _is_aojiu_position(
+        self,
+        line: str,
+        line_tone: int,
+        position: int,
+        target_length: int,
+    ) -> bool:
+        if not self._allow_aojiu:
+            return False
+        if line_tone == 0 and position == 3 and target_length >= 5:
+            rescue_positions = (0, 2)
+        elif line_tone == 1 and position == 5 and target_length >= 7:
+            rescue_positions = (2, 4)
+        else:
+            return False
+        if any(index >= len(line) for index in rescue_positions):
+            return False
+        if not all(
+            len(self._lexicon.get_pingze(line[index])) == 1
+            and self._lexicon.get_pingze(line[index])[0] == "仄"
+            for index in rescue_positions
+        ):
+            return False
+        if len(line) < target_length:
+            return True
+        last_tones = self._lexicon.get_pingze(line[-1])
+        return len(last_tones) == 1 and last_tones[0] == "平"
+
+    def _check_prevent_three_same(
+        self,
+        line: str,
+        target: int,
+        end_tone: int,
+        line_tone: int,
+    ) -> bool:
         if end_tone == 2:
             return True
         expected = "平" if end_tone == 0 else "仄"
+        if (
+            self._reject_ambiguous_three_same
+            and len(line) == target - 2
+            and line_tone != 2
+        ):
+            penultimate_tone = line_tone if target == 7 else 1 - line_tone
+            if penultimate_tone == end_tone:
+                tones = self._lexicon.get_pingze(line[-1])
+                if expected in tones:
+                    return False
         return not would_force_three_same_ending(
             line,
             target,
             (expected,),
             self._lexicon,
+            reject_ambiguous=self._reject_ambiguous_three_same,
         )
+
+    def _check_prevent_isolated_level(
+        self,
+        line: str,
+        target: int,
+        end_tone: int,
+        line_tone: int,
+    ) -> bool:
+        if end_tone != 0 or line_tone == 2:
+            return True
+        if line_tone == 0:
+            left_index, right_index, rescue_index = 0, 2, 3
+        elif target == 7:
+            left_index, right_index, rescue_index = 2, 4, 5
+        else:
+            return True
+
+        required_length = rescue_index + 1 if self._allow_aojiu else right_index + 1
+        if len(line) < required_length:
+            return True
+        left = self._lexicon.get_pingze(line[left_index])
+        right = self._lexicon.get_pingze(line[right_index])
+        isolated = len(left) == len(right) == 1 and left[0] == right[0] == "仄"
+        if not isolated:
+            return True
+        if not self._allow_aojiu:
+            return False
+        rescue = self._lexicon.get_pingze(line[rescue_index])
+        return len(rescue) == 1 and rescue[0] == "平"
 
     def _check_isolated_level(self, line: str, line_tone: int) -> bool:
         if len(line) < 3:
@@ -297,11 +402,21 @@ class TangVerifierPolicy:
         if line_tone == 0:
             left = self._lexicon.get_pingze(line[0])
             right = self._lexicon.get_pingze(line[2])
-            return not (len(left) == len(right) == 1 and left[0] == right[0] == "仄")
+            isolated = len(left) == len(right) == 1 and left[0] == right[0] == "仄"
+            if isolated and self._allow_aojiu and len(line) >= 4:
+                rescue = self._lexicon.get_pingze(line[3])
+                if len(rescue) == 1 and rescue[0] == "平":
+                    return True
+            return not isolated
         if line_tone == 1 and len(line) >= 5:
             left = self._lexicon.get_pingze(line[2])
             right = self._lexicon.get_pingze(line[4])
-            return not (len(left) == len(right) == 1 and left[0] == right[0] == "仄")
+            isolated = len(left) == len(right) == 1 and left[0] == right[0] == "仄"
+            if isolated and self._allow_aojiu and len(line) >= 6:
+                rescue = self._lexicon.get_pingze(line[5])
+                if len(rescue) == 1 and rescue[0] == "平":
+                    return True
+            return not isolated
         return True
 
     def _check_end_tone(self, char: str, end_tone: int) -> bool:

@@ -28,7 +28,12 @@ from .processor import (
     SeparatorPolicy,
     TemplateSeparatorPolicy,
 )
-from .prompts import build_hanpai_prompt, build_relational_prompt, build_template_prompt
+from .prompts import (
+    build_hanpai_prompt,
+    build_pailv_prompt,
+    build_relational_prompt,
+    build_template_prompt,
+)
 from .state import GenerationController, GenerationStateMachine
 from .vocab import TokenizerLike, VocabLookup
 
@@ -72,6 +77,13 @@ class HanpaiOptions:
 
 
 @dataclass(frozen=True)
+class PailvOptions:
+    """排律的专用格律配置。"""
+
+    allow_aojiu: bool = True
+
+
+@dataclass(frozen=True)
 class TaskRequest:
     meter_type: str
     form_name: str
@@ -81,7 +93,9 @@ class TaskRequest:
     requirement: str = ""
     use_thinking: bool = True
     cipai_data_path: str = "PoeTone-main/data/cipai_data.json"
+    num_lines: int | None = None
     hanpai: HanpaiOptions = field(default_factory=HanpaiOptions)
+    pailv: PailvOptions = field(default_factory=PailvOptions)
 
 
 @dataclass(frozen=True)
@@ -250,6 +264,56 @@ class HanpaiTaskFactory:
         )
 
 
+class PailvTaskFactory:
+    def create(self, request: TaskRequest, context: TaskContext) -> TaskRuntime:
+        line_length, num_lines = parse_pailv_format(
+            request.form_name,
+            request.num_lines,
+        )
+        profile = RelationalConstraintProfile(
+            line_length=line_length,
+            num_lines=num_lines,
+            rhyme_type="平韵",
+            lexicon=context.lexicon,
+            allow_aojiu=request.pailv.allow_aojiu,
+        )
+        boundary = BoundaryCoherencePolicy(
+            context.vocab.common_bigrams(), context.boundary_coherence_penalty
+        )
+        messages = build_pailv_prompt(
+            task_type=request.task_type,
+            form_name=request.form_name,
+            theme=request.theme,
+            line_length=line_length,
+            num_lines=num_lines,
+            requirement=request.requirement,
+            use_thinking=request.use_thinking,
+            rhyme_dict_name=request.rhyme_dict_name,
+            allow_aojiu=request.pailv.allow_aojiu,
+        )
+        return TaskRuntime(
+            profile=profile,
+            messages=messages,
+            separator_policy=RelationalSeparatorPolicy(context.tokenizer),
+            policy_tiers=(
+                PolicyTier(
+                    "pailv-strict",
+                    (
+                        TangVerifierPolicy(
+                            context.lexicon,
+                            "full",
+                            allow_aojiu=request.pailv.allow_aojiu,
+                            enforce_style=False,
+                            reject_ambiguous_three_same=True,
+                        ),
+                        boundary,
+                    ),
+                ),
+            ),
+            processor_config=ProcessorConfig(),
+        )
+
+
 class TaskFactoryRegistry:
     def __init__(self):
         self._factories: dict[str, TaskFactory] = {}
@@ -270,6 +334,7 @@ def default_task_registry() -> TaskFactoryRegistry:
     registry.register("宋词", TemplateTaskFactory())
     registry.register("唐诗", RelationalTaskFactory())
     registry.register("汉俳", HanpaiTaskFactory())
+    registry.register("排律", PailvTaskFactory())
     return registry
 
 
@@ -279,6 +344,25 @@ def parse_tang_format(form_name: str) -> tuple[int, int, str]:
     num_lines = 4 if "绝" in name else 8
     rhyme_type = "仄韵" if "仄" in name and "韵" in name else "平韵"
     return line_length, num_lines, rhyme_type
+
+
+def parse_pailv_format(
+    form_name: str,
+    num_lines: int | None,
+) -> tuple[int, int]:
+    normalized = form_name.strip()
+    formats = {"五言排律": 5, "七言排律": 7}
+    try:
+        line_length = formats[normalized]
+    except KeyError as exc:
+        raise ValueError(
+            f"排律格式仅支持“五言排律”或“七言排律”，收到: {form_name}"
+        ) from exc
+    if num_lines is None:
+        raise ValueError("排律必须通过 TaskRequest.num_lines 单独指定句数")
+    if num_lines < 10 or num_lines % 2 != 0:
+        raise ValueError(f"排律句数必须是不少于十句的偶数，收到: {num_lines}")
+    return line_length, num_lines
 
 
 def parse_hanpai_format(line_pattern: str) -> tuple[int, int, int]:

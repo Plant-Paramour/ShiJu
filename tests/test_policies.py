@@ -58,3 +58,89 @@ def test_tang_full_verifier_rejects_forbidden_character_but_critical_allows_it()
 
     assert TangVerifierPolicy(lexicon, "full").evaluate(12, context) is None
     assert TangVerifierPolicy(lexicon, "critical").evaluate(12, context) == 0.0
+
+
+def test_pailv_rejects_ambiguous_three_same_tail_before_last_character():
+    tokenizer = FakeTokenizer({20: "重"})
+    lexicon = FakeLexicon()
+    lexicon.tones["重"] = ["平", "仄"]
+    lexicon.parts["重"] = ["六"]
+    vocab = FakeVocab(tokenizer, lexicon)
+    state = GenerationState(
+        line_index=2,
+        char_index=3,
+        current_line_text="山雨雨",
+        all_text="山雨雨",
+        step=StepKind.TEXT,
+        line=LineLayout(length=5, break_positions=frozenset({2})),
+    )
+    relational = RelationalConstraintContext(
+        current_line=2,
+        current_char_idx=3,
+        target_length=5,
+        is_rhyming=False,
+        locked_rhyme_parts=None,
+        excluded_rhyme_parts=None,
+        rhyme_type="平韵",
+        base_tone=1,
+        global_base_tone=1,
+        line0_rhymes=False,
+    )
+    context = CandidateContext(state, relational, tokenizer, vocab)
+
+    permissive = TangVerifierPolicy(
+        lexicon,
+        enforce_style=False,
+        reject_ambiguous_three_same=False,
+    )
+    strict = TangVerifierPolicy(
+        lexicon,
+        enforce_style=False,
+        reject_ambiguous_three_same=True,
+    )
+
+    assert permissive.evaluate(20, context) == 0.0
+    assert strict.evaluate(20, context) is None
+
+
+def test_pailv_rejects_ambiguous_three_same_tail_two_characters_early():
+    tokenizer = FakeTokenizer({20: "藏"})
+    lexicon = FakeLexicon()
+    lexicon.tones["藏"] = ["平", "仄"]
+    lexicon.parts["藏"] = ["六"]
+    vocab = FakeVocab(tokenizer, lexicon)
+    state = GenerationState(
+        line_index=2,
+        char_index=2,
+        current_line_text="山春",
+        all_text="山春",
+        step=StepKind.TEXT,
+        line=LineLayout(length=5, break_positions=frozenset({2})),
+    )
+    relational = RelationalConstraintContext(
+        current_line=2,
+        current_char_idx=2,
+        target_length=5,
+        is_rhyming=False,
+        locked_rhyme_parts=None,
+        excluded_rhyme_parts=None,
+        rhyme_type="平韵",
+        base_tone=0,
+        global_base_tone=0,
+        line0_rhymes=False,
+    )
+    context = CandidateContext(state, relational, tokenizer, vocab)
+
+    permissive = TangVerifierPolicy(
+        lexicon,
+        enforce_style=False,
+        reject_ambiguous_three_same=False,
+    )
+    strict = TangVerifierPolicy(
+        lexicon,
+        enforce_style=False,
+        reject_ambiguous_three_same=True,
+    )
+
+    assert permissive.evaluate(20, context) == 0.0
+    assert strict.evaluate(20, context) is None

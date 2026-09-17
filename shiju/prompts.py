@@ -170,6 +170,41 @@ def _relational_task_prompt(
     )
 
 
+def _pailv_task_prompt(
+    form_name: str,
+    rhyme_name: str,
+    theme: str,
+    line_length: int,
+    num_lines: int,
+    requirement: str,
+    allow_aojiu: bool,
+) -> str:
+    length_name = "五言" if line_length == 5 else "七言"
+    aojiu_rule = "允许以邻位平声完成自然拗救" if allow_aojiu else "不安排拗救"
+    rules = (
+        "【排律格律约束】\n"
+        "以下格律须严格遵守：\n"
+        f"- 每句 {line_length} 字，共 {num_lines} 句；句数必须保持偶数\n"
+        "- 严格遵守替、对、粘：二四六等关键位置相替、相对、相粘，整篇按联次延续\n"
+        "- 偶数句以平声押韵，首句可押可不押；首句若押，必须与后文使用同一韵部\n"
+        "- 除首句外，奇数句以仄声收尾；偶数句全部押同一平声韵，一韵到底，不换韵、不通押邻韵\n"
+        f"- 禁止孤平，{aojiu_rule}；句尾禁止三连平或三连仄\n"
+        "- 对仗：首联、尾联可以不对，中间各联必须逐联对仗；允许使用扇面对等变格\n"
+        "- 不以“的”“些”“么”“了”等现代白话虚词入诗"
+    )
+    return (
+        "【创作形式】\n"
+        f"诗体：{form_name}（{length_name}排律）\n"
+        f"用韵：{rhyme_name}\n"
+        f"篇幅：每句{line_length}字，共{num_lines}句\n"
+        "字数、句数、句读、平仄和押韵须严格遵守。\n\n"
+        f"{_narrative_section(requirement)}\n\n"
+        f"{_style_section(theme)}\n\n"
+        f"{rules}\n\n"
+        f"{_final_section(form_name)}"
+    )
+
+
 def build_template_prompt(
     task_type: str,
     template: MeterTemplate,
@@ -302,6 +337,42 @@ def build_relational_prompt(
                 line_length,
                 num_lines,
                 requirement,
+            ),
+        },
+    ]
+    return _apply_thinking(messages, use_thinking)
+
+
+def build_pailv_prompt(
+    task_type: str,
+    form_name: str,
+    theme: str,
+    line_length: int,
+    num_lines: int,
+    requirement: str = "",
+    use_thinking: bool = True,
+    rhyme_dict_name: str = "Pinshui",
+    allow_aojiu: bool = True,
+) -> list[dict[str, str]]:
+    if task_type != "instruction":
+        raise ValueError(f"排律当前只支持 instruction，收到: {task_type}")
+    rhyme_name = RHYME_NAMES.get(rhyme_dict_name, rhyme_dict_name)
+    messages = [
+        {
+            "role": "system",
+            "content": "你是一位擅长排律创作的诗人，熟悉联次章法、对仗和声韵格律。\n\n"
+            + _output_contract(form_name),
+        },
+        {
+            "role": "user",
+            "content": _pailv_task_prompt(
+                form_name,
+                rhyme_name,
+                theme,
+                line_length,
+                num_lines,
+                requirement,
+                allow_aojiu,
             ),
         },
     ]

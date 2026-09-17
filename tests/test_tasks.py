@@ -1,6 +1,13 @@
 from pathlib import Path
 
-from shiju.tasks import HanpaiOptions, TaskContext, TaskRequest, default_task_registry
+from shiju.tasks import (
+    HanpaiOptions,
+    PailvOptions,
+    TaskContext,
+    TaskRequest,
+    default_task_registry,
+    parse_pailv_format,
+)
 
 from conftest import FakeLexicon, FakeTokenizer, FakeVocab
 
@@ -131,3 +138,49 @@ def test_task_factories_receive_configured_boundary_penalty(tmp_path):
     boundary_policy = runtime.policy_tiers[0].policies[-1]
 
     assert boundary_policy._penalty == 12.5
+
+
+def test_pailv_task_supports_twelve_lines_and_strict_prompt(tmp_path):
+    tokenizer = FakeTokenizer()
+    lexicon = FakeLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    context = TaskContext(tokenizer, vocab, lexicon, tmp_path / "missing", 50.0)
+    request = TaskRequest(
+        meter_type="排律",
+        form_name="五言排律",
+        num_lines=16,
+        theme="秋江怀远",
+        rhyme_dict_name="Pinshui",
+        use_thinking=False,
+        pailv=PailvOptions(allow_aojiu=True),
+    )
+
+    runtime = default_task_registry().create(request, context)
+    prompt = "\n".join(message["content"] for message in runtime.messages)
+
+    assert len(runtime.profile.layout.lines) == 16
+    assert all(line.length == 5 for line in runtime.profile.layout.lines)
+    assert "严格遵守替、对、粘" in prompt
+    assert "首句可押可不押" in prompt
+    assert "不换韵、不通押邻韵" in prompt
+    assert "中间各联必须逐联对仗" in prompt
+    assert runtime.policy_tiers[0].name == "pailv-strict"
+
+
+def test_parse_pailv_format_uses_a_separate_line_count():
+    assert parse_pailv_format("七言排律", 20) == (7, 20)
+    assert parse_pailv_format("五言排律", 12) == (5, 12)
+    assert parse_pailv_format("五言排律", 100) == (5, 100)
+
+
+def test_parse_pailv_format_rejects_short_or_odd_counts():
+    import pytest
+
+    with pytest.raises(ValueError):
+        parse_pailv_format("五言排律", 8)
+    with pytest.raises(ValueError):
+        parse_pailv_format("七言排律", 11)
+    with pytest.raises(ValueError):
+        parse_pailv_format("七言排律", None)
+    with pytest.raises(ValueError):
+        parse_pailv_format("五言排律16句", 16)
