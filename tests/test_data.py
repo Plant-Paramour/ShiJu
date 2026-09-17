@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from shiju.data import MeterTemplateRepository, RhymeLexicon
+from shiju.domain import AllowedPattern, RhymeConstraint
 from shiju.vocab import VocabIndex
 
 from conftest import FakeLexicon, FakeTokenizer
@@ -48,3 +49,15 @@ def test_vocab_keeps_unindexed_bigram_for_boundary_detection():
     assert index.text_for_token(20) == "天地"
     assert "天地" in index.common_bigrams()
     assert index.resolve_patterns(()) == set()
+
+
+def test_vocab_supports_strict_and_permissive_polyphonic_modes():
+    lexicon = FakeLexicon()
+    lexicon.tones["重"] = ["平", "仄"]
+    lexicon.parts["重"] = ["一"]
+    tokenizer = FakeTokenizer({20: "重"})
+    index = VocabIndex(tokenizer, lexicon)
+    patterns = (AllowedPattern(1, "平", RhymeConstraint.none()),)
+
+    assert 20 not in index.resolve_patterns(patterns, strict_polyphonic=True)
+    assert 20 in index.resolve_patterns(patterns, strict_polyphonic=False)

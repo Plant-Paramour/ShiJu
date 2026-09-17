@@ -112,7 +112,12 @@ class FakeVocab:
     def common_bigrams(self):
         return frozenset(text for text in self._texts.values() if len(text) == 2)
 
-    def resolve_patterns(self, patterns, ignore_rhyme=False):
+    def resolve_patterns(
+        self,
+        patterns,
+        ignore_rhyme=False,
+        strict_polyphonic=True,
+    ):
         result = set()
         for pattern in patterns:
             for token_id, text in self._texts.items():

@@ -17,6 +17,7 @@ def main() -> None:
             theme="爱，美，诗，与永恒",
             rhyme_dict_name="Xinyun",
             use_thinking=False,
+            strict_polyphonic=True,
             requirement="""
             你需要创作一首七言排律，一共16句。
             你不应该直译下面的这首诗，也不应该单纯translate这些意象。而是应该自由的选择合适的中文诗词传统意象，信达雅的将十四行诗翻译为中文七言八韵十六句。

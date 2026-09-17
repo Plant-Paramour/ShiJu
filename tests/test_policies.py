@@ -91,12 +91,12 @@ def test_pailv_rejects_ambiguous_three_same_tail_before_last_character():
     permissive = TangVerifierPolicy(
         lexicon,
         enforce_style=False,
-        reject_ambiguous_three_same=False,
+        strict_polyphonic=False,
     )
     strict = TangVerifierPolicy(
         lexicon,
         enforce_style=False,
-        reject_ambiguous_three_same=True,
+        strict_polyphonic=True,
     )
 
     assert permissive.evaluate(20, context) == 0.0
@@ -134,13 +134,45 @@ def test_pailv_rejects_ambiguous_three_same_tail_two_characters_early():
     permissive = TangVerifierPolicy(
         lexicon,
         enforce_style=False,
-        reject_ambiguous_three_same=False,
+        strict_polyphonic=False,
     )
     strict = TangVerifierPolicy(
         lexicon,
         enforce_style=False,
-        reject_ambiguous_three_same=True,
+        strict_polyphonic=True,
     )
 
     assert permissive.evaluate(20, context) == 0.0
     assert strict.evaluate(20, context) is None
+
+
+def test_tang_dynamic_programming_rejects_prefix_with_no_legal_ending():
+    tokenizer = FakeTokenizer({20: "夜", 21: "花"})
+    lexicon = FakeLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    state = GenerationState(
+        line_index=0,
+        char_index=4,
+        current_line_text="山雨月山",
+        all_text="山雨月山",
+        step=StepKind.TEXT,
+        line=LineLayout(length=7, break_positions=frozenset({2, 4})),
+    )
+    relational = RelationalConstraintContext(
+        current_line=0,
+        current_char_idx=4,
+        target_length=7,
+        is_rhyming=False,
+        locked_rhyme_parts=None,
+        excluded_rhyme_parts=None,
+        rhyme_type="平韵",
+        base_tone=1,
+        global_base_tone=1,
+        line0_rhymes=False,
+    )
+    context = CandidateContext(state, relational, tokenizer, vocab)
+    policy = TangVerifierPolicy(lexicon, enforce_style=False)
+
+    # 选“夜”后，第六字按格律只能为仄：平收犯孤平，仄收成三仄尾。
+    assert policy.evaluate(20, context) is None
+    assert policy.evaluate(21, context) == 0.0

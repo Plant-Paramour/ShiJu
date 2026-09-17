@@ -126,7 +126,12 @@ def test_hanpai_seven_char_line_limits_tokens_to_next_break(
 
 def test_hanpai_processor_rejects_token_longer_than_current_segment():
     class BoundaryLeakingVocab(FakeVocab):
-        def resolve_patterns(self, patterns, ignore_rhyme=False):
+        def resolve_patterns(
+            self,
+            patterns,
+            ignore_rhyme=False,
+            strict_polyphonic=True,
+        ):
             return {2, 20}
 
     tokenizer = FakeTokenizer({20: "山雨"})
@@ -461,6 +466,10 @@ def test_hanpai_rejects_if_any_polyphonic_interpretation_is_three_same():
     )
 
     assert HanpaiVerifierPolicy(lexicon).evaluate(20, context) is None
+    assert (
+        HanpaiVerifierPolicy(lexicon, strict_polyphonic=False).evaluate(20, context)
+        == 0.0
+    )
 
 
 def test_hanpai_aojiu_can_rescue_an_isolated_level_tone():

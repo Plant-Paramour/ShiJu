@@ -24,7 +24,12 @@ class VocabLookup(Protocol):
 
     def common_bigrams(self) -> frozenset[str]: ...
 
-    def resolve_patterns(self, patterns: Iterable[AllowedPattern], ignore_rhyme: bool = False) -> Set[int]: ...
+    def resolve_patterns(
+        self,
+        patterns: Iterable[AllowedPattern],
+        ignore_rhyme: bool = False,
+        strict_polyphonic: bool = True,
+    ) -> Set[int]: ...
 
 
 class VocabIndex:
@@ -36,6 +41,7 @@ class VocabIndex:
         self._tokenizer = tokenizer
         self._lexicon = rhyme_lexicon
         self._token_to_text: Dict[int, str] = {}
+        self._token_patterns: Dict[int, frozenset[str]] = {}
         self._pattern_tokens: Dict[Tuple[int, str], Set[int]] = {}
         self._rhyme_tokens: Dict[Tuple[str, str], Set[int]] = {}
         self._build_index()
@@ -50,6 +56,7 @@ class VocabIndex:
             patterns = self._all_pingze_patterns(clean_text)
             if not patterns:
                 continue
+            self._token_patterns[token_id] = frozenset(patterns)
             for pattern in patterns:
                 self._pattern_tokens.setdefault((len(clean_text), pattern), set()).add(token_id)
             last_char = clean_text[-1]
@@ -77,7 +84,9 @@ class VocabIndex:
         self,
         patterns: Iterable[AllowedPattern],
         ignore_rhyme: bool = False,
+        strict_polyphonic: bool = True,
     ) -> Set[int]:
+        patterns = tuple(patterns)
         allowed: Set[int] = set()
         for item in patterns:
             base = set(self._pattern_tokens.get((item.length, item.tones), ()))
@@ -93,4 +102,45 @@ class VocabIndex:
                         rhyme_tokens.update(self._rhyme_tokens.get((rhyme.tone or "", part), ()))
                 base.intersection_update(rhyme_tokens)
             allowed.update(base)
+        if strict_polyphonic:
+            allowed = {
+                token_id
+                for token_id in allowed
+                if all(
+                    any(
+                        item.length == len(self._token_to_text[token_id])
+                        and item.tones == token_pattern
+                        and self._matches_rhyme(
+                            token_id,
+                            item,
+                            ignore_rhyme,
+                            strict_polyphonic=True,
+                        )
+                        for item in patterns
+                    )
+                    for token_pattern in self._token_patterns[token_id]
+                )
+            }
         return allowed
+
+    def _matches_rhyme(
+        self,
+        token_id: int,
+        pattern: AllowedPattern,
+        ignore_rhyme: bool,
+        strict_polyphonic: bool = False,
+    ) -> bool:
+        rhyme = pattern.rhyme
+        if ignore_rhyme or rhyme.mode is RhymeMode.NONE:
+            return True
+        last_char = self._token_to_text[token_id][-1]
+        parts = set(
+            self._lexicon.get_rhyme_part_by_tone(last_char, rhyme.tone or "")
+        )
+        if rhyme.mode is RhymeMode.ANY:
+            if strict_polyphonic:
+                return bool(parts) and not parts.intersection(rhyme.excluded_parts)
+            return bool(parts.difference(rhyme.excluded_parts))
+        if strict_polyphonic:
+            return bool(parts) and parts.issubset(rhyme.parts)
+        return bool(parts.intersection(rhyme.parts))

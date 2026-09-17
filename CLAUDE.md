@@ -68,6 +68,7 @@ TaskRequest(
     theme="初秋离别",
     rhyme_dict_name="Xinyun",
     use_thinking=False,           # 启用 /no_think，无模型思考过程
+    strict_polyphonic=True,       # True：所有读音均须合法；False：存在合法读音即可
     hanpai=HanpaiOptions(
         line_pattern="5-7-5",       # 或 3-5-3
         season_word="寒蝉",          # 指定一个季语
@@ -84,6 +85,8 @@ TaskRequest(
 汉俳正文固定输出三行，行间只换行。五字句按 2/3、七字句按 2/2/3 设置 token 跨界限制；生成时在内部句读处强制插入临时顿号，让模型明确感知节奏段，保存结果前自动移除。正文始终必须包含明显季语；未选择的平仄格律与押韵规则不会被解码器隐式启用。
 
 排律通过 `TaskRequest(meter_type="排律", ...)` 接入。`form_name` 仅使用“`五言排律`”或“`七言排律`”，句数由独立的 `num_lines` 参数指定，例如 `num_lines=16`。句数必须是不少于十句的偶数且不设上限。排律固定使用平韵，首句可押可不押，偶数句押韵并锁定同一韵部；约束层负责字数、替对粘、平仄、孤平、拗救和三连同，逐联对仗仅通过提示词要求。
+
+关系型诗体会在每个候选 token 后用动态规划检查当前句是否仍存在合法的完整平仄路径，提前过滤会同时触发孤平、三平尾或三仄尾等组合死路。`TaskRequest.strict_polyphonic` 控制多音字策略：默认 `True` 时所有读音都必须满足当前约束；设为 `False` 时，只要至少一个读音满足约束即可放行。
 
 依赖文件：
 

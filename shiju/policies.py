@@ -6,7 +6,7 @@ from typing import Any, Protocol, Sequence
 
 from .candidates import (
     decode_position_candidate,
-    has_three_same_ending,
+    has_viable_tang_completion,
     iter_tone_combinations,
     would_force_three_same_ending,
 )
@@ -96,8 +96,9 @@ class RepetitionPenaltyPolicy:
 class HanpaiVerifierPolicy:
     """校验汉俳可选的孤平、拗救和句尾三连同规则。"""
 
-    def __init__(self, lexicon: RhymeLookup):
+    def __init__(self, lexicon: RhymeLookup, strict_polyphonic: bool = True):
         self._lexicon = lexicon
+        self._strict_polyphonic = strict_polyphonic
 
     def evaluate(self, token_id: int, context: CandidateContext) -> float | None:
         info = context.constraint
@@ -122,7 +123,7 @@ class HanpaiVerifierPolicy:
             info.target_length,
             info.allowed_end_tones,
             self._lexicon,
-            reject_ambiguous=True,
+            reject_ambiguous=self._strict_polyphonic,
         ):
             return None
         if len(simulated) < info.target_length:
@@ -140,7 +141,11 @@ class HanpaiVerifierPolicy:
             if info.forbid_isolated_level
             else ()
         )
-        tone_rules = ToneRuleSet(reject_any=reject_rules, accept_any=accept_rules)
+        tone_rules = ToneRuleSet(
+            reject_any=reject_rules,
+            accept_any=accept_rules,
+            strict_polyphonic=self._strict_polyphonic,
+        )
         if not tone_rules.validate(iter_tone_combinations(simulated, self._lexicon)):
             return None
         return 0.0
@@ -155,7 +160,7 @@ class TangVerifierPolicy:
         mode: str = "full",
         allow_aojiu: bool = False,
         enforce_style: bool = True,
-        reject_ambiguous_three_same: bool = False,
+        strict_polyphonic: bool = True,
     ):
         if mode not in {"full", "critical"}:
             raise ValueError(f"未知唐诗校验模式: {mode}")
@@ -163,7 +168,7 @@ class TangVerifierPolicy:
         self._mode = mode
         self._allow_aojiu = allow_aojiu
         self._enforce_style = enforce_style
-        self._reject_ambiguous_three_same = reject_ambiguous_three_same
+        self._strict_polyphonic = strict_polyphonic
 
     def evaluate(self, token_id: int, context: CandidateContext) -> float | None:
         relational = context.constraint
@@ -201,6 +206,16 @@ class TangVerifierPolicy:
 
         line_tone = self._resolve_line_tone(info.base_tone, simulated, state.current_line_text)
         end_tone = self._end_tone(info)
+        if not has_viable_tang_completion(
+            simulated,
+            target_length,
+            line_tone,
+            end_tone,
+            self._lexicon,
+            allow_aojiu=self._allow_aojiu,
+            strict_polyphonic=self._strict_polyphonic,
+        ):
+            return None
         if not self._check_even_positions(simulated, line_tone, target_length):
             return None
         if not self._check_prevent_isolated_level(
@@ -212,8 +227,6 @@ class TangVerifierPolicy:
         ):
             return None
         if len(simulated) == target_length:
-            if has_three_same_ending(simulated, self._lexicon):
-                return None
             if not self._check_isolated_level(simulated, line_tone):
                 return None
             if not self._check_end_tone(simulated[-1], end_tone):
@@ -257,6 +270,16 @@ class TangVerifierPolicy:
             return None
         line_tone = self._resolve_line_tone(info.base_tone, simulated, state.current_line_text)
         end_tone = self._end_tone(info)
+        if not has_viable_tang_completion(
+            simulated,
+            info.target_length,
+            line_tone,
+            end_tone,
+            self._lexicon,
+            allow_aojiu=self._allow_aojiu,
+            strict_polyphonic=self._strict_polyphonic,
+        ):
+            return None
         if not self._check_even_positions(simulated, line_tone, info.target_length):
             return None
         if not self._check_prevent_isolated_level(
@@ -268,8 +291,6 @@ class TangVerifierPolicy:
         ):
             return None
         if len(simulated) == info.target_length:
-            if has_three_same_ending(simulated, self._lexicon):
-                return None
             if not self._check_end_tone(simulated[-1], end_tone):
                 return None
             if info.is_rhyming and info.locked_rhyme_parts:
@@ -347,7 +368,7 @@ class TangVerifierPolicy:
             return True
         expected = "平" if end_tone == 0 else "仄"
         if (
-            self._reject_ambiguous_three_same
+            self._strict_polyphonic
             and len(line) == target - 2
             and line_tone != 2
         ):
@@ -361,7 +382,7 @@ class TangVerifierPolicy:
             target,
             (expected,),
             self._lexicon,
-            reject_ambiguous=self._reject_ambiguous_three_same,
+            reject_ambiguous=self._strict_polyphonic,
         )
 
     def _check_prevent_isolated_level(
@@ -440,10 +461,18 @@ class TangVerifierPolicy:
             return True
         expected = "平" if "平" in info.rhyme_type else "仄"
         parts = set(self._lexicon.get_rhyme_part_by_tone(char, expected))
-        if info.locked_rhyme_parts and parts and not info.locked_rhyme_parts.intersection(parts):
-            return False
-        if info.excluded_rhyme_parts and parts and info.excluded_rhyme_parts.intersection(parts):
-            return False
+        if info.locked_rhyme_parts and parts:
+            if self._strict_polyphonic:
+                if not parts.issubset(info.locked_rhyme_parts):
+                    return False
+            elif not info.locked_rhyme_parts.intersection(parts):
+                return False
+        if info.excluded_rhyme_parts and parts:
+            if self._strict_polyphonic:
+                if info.excluded_rhyme_parts.intersection(parts):
+                    return False
+            elif parts.issubset(info.excluded_rhyme_parts):
+                return False
         return True
 
     @staticmethod

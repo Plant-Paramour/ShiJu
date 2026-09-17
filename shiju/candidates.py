@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from itertools import product
 from typing import Iterable
 
@@ -111,3 +112,98 @@ def would_force_three_same_ending(
         return third_tones == (end_tone,) and second_tones == (end_tone,)
 
     return all(forces_tone(end_tone) for end_tone in end_tones)
+
+
+def has_viable_tang_completion(
+    text: str,
+    target_length: int,
+    line_tone: int,
+    end_tone: int,
+    lexicon: RhymeLookup,
+    *,
+    allow_aojiu: bool = False,
+    strict_polyphonic: bool = True,
+) -> bool:
+    """判断关系型诗句的当前前缀能否补成合法的完整平仄序列。"""
+    tone_options = tuple(
+        tuple(dict.fromkeys(lexicon.get_pingze(char))) for char in text
+    )
+    if any(not tones for tones in tone_options):
+        return False
+    return _has_viable_tang_tones(
+        tone_options,
+        target_length,
+        line_tone,
+        end_tone,
+        allow_aojiu,
+        strict_polyphonic,
+    )
+
+
+@lru_cache(maxsize=8192)
+def _has_viable_tang_tones(
+    tone_options: tuple[tuple[str, ...], ...],
+    target_length: int,
+    line_tone: int,
+    end_tone: int,
+    allow_aojiu: bool,
+    strict_polyphonic: bool,
+) -> bool:
+    if len(tone_options) > target_length:
+        return False
+
+    def full_line_is_valid(tones: tuple[str, ...]) -> bool:
+        resolved_line_tone = line_tone
+        if resolved_line_tone == 2:
+            resolved_line_tone = 0 if tones[1] == "平" else 1
+
+        expected_positions = (
+            (1, resolved_line_tone),
+            (3, 1 - resolved_line_tone),
+            (5, resolved_line_tone),
+        )
+        for position, expected_value in expected_positions:
+            if position >= target_length:
+                continue
+            expected = "平" if expected_value == 0 else "仄"
+            if tones[position] == expected:
+                continue
+            rescued = False
+            if allow_aojiu and resolved_line_tone == 0 and position == 3:
+                rescued = tones[0] == tones[2] == "仄" and tones[-1] == "平"
+            elif allow_aojiu and resolved_line_tone == 1 and position == 5:
+                rescued = tones[2] == tones[4] == "仄" and tones[-1] == "平"
+            if not rescued:
+                return False
+
+        if end_tone != 2 and tones[-1] != ("平" if end_tone == 0 else "仄"):
+            return False
+        if len(set(tones[-3:])) == 1:
+            return False
+
+        if tones[-1] == "平":
+            if resolved_line_tone == 0:
+                isolated = tones[0] == tones[2] == "仄"
+                rescued = allow_aojiu and tones[3] == "平"
+                if isolated and not rescued:
+                    return False
+            elif resolved_line_tone == 1 and target_length >= 7:
+                isolated = tones[2] == tones[4] == "仄"
+                rescued = allow_aojiu and tones[5] == "平"
+                if isolated and not rescued:
+                    return False
+        return True
+
+    prefixes = tuple(tuple(tones) for tones in product(*tone_options))
+
+    @lru_cache(maxsize=None)
+    def can_finish(suffix: tuple[str, ...]) -> bool:
+        if len(tone_options) + len(suffix) == target_length:
+            results = (
+                full_line_is_valid(prefix + suffix)
+                for prefix in prefixes
+            )
+            return all(results) if strict_polyphonic else any(results)
+        return can_finish(suffix + ("平",)) or can_finish(suffix + ("仄",))
+
+    return can_finish(())

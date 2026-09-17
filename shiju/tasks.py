@@ -92,6 +92,7 @@ class TaskRequest:
     task_type: str = "instruction"
     requirement: str = ""
     use_thinking: bool = True
+    strict_polyphonic: bool = True
     cipai_data_path: str = "PoeTone-main/data/cipai_data.json"
     num_lines: int | None = None
     hanpai: HanpaiOptions = field(default_factory=HanpaiOptions)
@@ -170,7 +171,9 @@ class TemplateTaskFactory:
             policy_tiers=(
                 PolicyTier("template", (RepetitionPenaltyPolicy(), boundary)),
             ),
-            processor_config=ProcessorConfig(),
+            processor_config=ProcessorConfig(
+                strict_polyphonic=request.strict_polyphonic,
+            ),
         )
 
 
@@ -201,8 +204,27 @@ class RelationalTaskFactory:
             messages=messages,
             separator_policy=RelationalSeparatorPolicy(context.tokenizer),
             policy_tiers=(
-                PolicyTier("tang-full", (TangVerifierPolicy(context.lexicon, "full"), boundary)),
-                PolicyTier("tang-critical", (TangVerifierPolicy(context.lexicon, "critical"),)),
+                PolicyTier(
+                    "tang-full",
+                    (
+                        TangVerifierPolicy(
+                            context.lexicon,
+                            "full",
+                            strict_polyphonic=request.strict_polyphonic,
+                        ),
+                        boundary,
+                    ),
+                ),
+                PolicyTier(
+                    "tang-critical",
+                    (
+                        TangVerifierPolicy(
+                            context.lexicon,
+                            "critical",
+                            strict_polyphonic=request.strict_polyphonic,
+                        ),
+                    ),
+                ),
             ),
             processor_config=ProcessorConfig(
                 relax_rhyme_on_empty=True,
@@ -210,6 +232,7 @@ class RelationalTaskFactory:
                 raw_after_policy_failure=True,
                 release_constraints_after_finish=True,
                 separator_empty_returns_raw=True,
+                strict_polyphonic=request.strict_polyphonic,
             ),
         )
 
@@ -253,13 +276,18 @@ class HanpaiTaskFactory:
                 PolicyTier(
                     "hanpai",
                     (
-                        HanpaiVerifierPolicy(context.lexicon),
+                        HanpaiVerifierPolicy(
+                            context.lexicon,
+                            strict_polyphonic=request.strict_polyphonic,
+                        ),
                         RepetitionPenaltyPolicy(),
                         boundary,
                     ),
                 ),
             ),
-            processor_config=ProcessorConfig(),
+            processor_config=ProcessorConfig(
+                strict_polyphonic=request.strict_polyphonic,
+            ),
             output_transform=_strip_hanpai_caesuras,
         )
 
@@ -304,13 +332,15 @@ class PailvTaskFactory:
                             "full",
                             allow_aojiu=request.pailv.allow_aojiu,
                             enforce_style=False,
-                            reject_ambiguous_three_same=True,
+                            strict_polyphonic=request.strict_polyphonic,
                         ),
                         boundary,
                     ),
                 ),
             ),
-            processor_config=ProcessorConfig(),
+            processor_config=ProcessorConfig(
+                strict_polyphonic=request.strict_polyphonic,
+            ),
         )
 
 

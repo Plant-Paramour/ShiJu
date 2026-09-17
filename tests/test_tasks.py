@@ -167,6 +167,27 @@ def test_pailv_task_supports_twelve_lines_and_strict_prompt(tmp_path):
     assert runtime.policy_tiers[0].name == "pailv-strict"
 
 
+def test_pailv_task_propagates_permissive_polyphonic_mode(tmp_path):
+    tokenizer = FakeTokenizer()
+    lexicon = FakeLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    context = TaskContext(tokenizer, vocab, lexicon, tmp_path / "missing", 50.0)
+    request = TaskRequest(
+        meter_type="排律",
+        form_name="七言排律",
+        num_lines=12,
+        theme="秋夜",
+        rhyme_dict_name="Xinyun",
+        strict_polyphonic=False,
+    )
+
+    runtime = default_task_registry().create(request, context)
+    verifier = runtime.policy_tiers[0].policies[0]
+
+    assert runtime.processor_config.strict_polyphonic is False
+    assert verifier._strict_polyphonic is False
+
+
 def test_parse_pailv_format_uses_a_separate_line_count():
     assert parse_pailv_format("七言排律", 20) == (7, 20)
     assert parse_pailv_format("五言排律", 12) == (5, 12)

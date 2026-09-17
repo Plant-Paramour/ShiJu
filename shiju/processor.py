@@ -26,6 +26,7 @@ class ProcessorConfig:
     raw_after_policy_failure: bool = False
     release_constraints_after_finish: bool = False
     separator_empty_returns_raw: bool = False
+    strict_polyphonic: bool = True
 
 
 def _exact_token_ids(tokenizer: TokenizerLike, values: Sequence[str]) -> set[int]:
@@ -192,11 +193,18 @@ class ConstrainedLogitsProcessor(LogitsProcessor):
             return self._only_tokens(scores, allowed)
 
         patterns = self._controller.allowed_patterns()
-        allowed_ids = self._vocab.resolve_patterns(patterns)
+        allowed_ids = self._vocab.resolve_patterns(
+            patterns,
+            strict_polyphonic=self._config.strict_polyphonic,
+        )
         vocab_size = scores.shape[1]
         allowed_ids = self._limit_to_current_segment(allowed_ids, vocab_size)
         if not allowed_ids and self._config.relax_rhyme_on_empty:
-            allowed_ids = self._vocab.resolve_patterns(patterns, ignore_rhyme=True)
+            allowed_ids = self._vocab.resolve_patterns(
+                patterns,
+                ignore_rhyme=True,
+                strict_polyphonic=self._config.strict_polyphonic,
+            )
             allowed_ids = self._limit_to_current_segment(allowed_ids, vocab_size)
         if not allowed_ids:
             if self._config.raw_on_no_candidates:

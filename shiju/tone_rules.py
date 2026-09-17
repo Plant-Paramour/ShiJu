@@ -37,24 +37,23 @@ class HanpaiIsolatedLevelRule:
 
 @dataclass(frozen=True)
 class ToneRuleSet:
-    """组合多音字候选的全局拒绝规则和至少一种可接受解释。"""
+    """按严格或放行模式校验多音字的全部平仄组合。"""
 
     reject_any: tuple[ToneRule, ...] = ()
     accept_any: tuple[ToneRule, ...] = ()
+    strict_polyphonic: bool = True
 
     def validate(self, combinations: Iterable[tuple[str, ...]]) -> bool:
         combinations = tuple(combinations)
         if not combinations:
             return False
-        if any(
-            not rule.validate(tones)
-            for rule in self.reject_any
-            for tones in combinations
-        ):
-            return False
-        if self.accept_any and not any(
-            all(rule.validate(tones) for rule in self.accept_any)
-            for tones in combinations
-        ):
-            return False
-        return True
+
+        def is_valid(tones: tuple[str, ...]) -> bool:
+            return all(
+                rule.validate(tones)
+                for rule in self.reject_any + self.accept_any
+            )
+
+        if self.strict_polyphonic:
+            return all(is_valid(tones) for tones in combinations)
+        return any(is_valid(tones) for tones in combinations)

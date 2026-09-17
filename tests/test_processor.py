@@ -17,7 +17,12 @@ class SingleTokenVocab(FakeVocab):
         super().__init__(tokenizer, lexicon)
         self.token_id = token_id
 
-    def resolve_patterns(self, patterns, ignore_rhyme=False):
+    def resolve_patterns(
+        self,
+        patterns,
+        ignore_rhyme=False,
+        strict_polyphonic=True,
+    ):
         return {self.token_id}
 
 
