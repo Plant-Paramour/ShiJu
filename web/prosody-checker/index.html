@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>诗词格律检查</title>
+  <link rel="stylesheet" href="./styles.css?v=3">
+</head>
+<body>
+  <main class="page">
+    <header class="page-header">
+      <h1>诗词格律检查</h1>
+    </header>
+
+    <div id="workspace" class="workspace">
+    <section class="panel input-panel" aria-labelledby="input-heading">
+      <h2 id="input-heading">输入作品</h2>
+
+      <form id="checker-form">
+        <fieldset class="type-switch">
+          <legend>体裁</legend>
+          <label><input type="radio" name="poem-type" value="tang" checked><span>唐诗</span></label>
+          <label><input type="radio" name="poem-type" value="songci"><span>宋词</span></label>
+          <label><input type="radio" name="poem-type" value="haiku"><span>俳句</span></label>
+          <label><input type="radio" name="poem-type" value="pailv"><span>排律</span></label>
+        </fieldset>
+
+        <div class="control-grid">
+          <label class="field">
+            <span>韵书</span>
+            <select id="rhyme-book">
+              <option value="Xinyun">中华新韵</option>
+              <option value="Pinshui">平水韵</option>
+              <option value="Cilin">词林正韵</option>
+              <option value="Tongyun">中华通韵</option>
+            </select>
+          </label>
+
+          <div id="tang-options" class="option-group">
+            <label class="field">
+              <span>字数</span>
+              <select id="tang-length">
+                <option value="5">五言</option>
+                <option value="7" selected>七言</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>篇式</span>
+              <select id="tang-form">
+                <option value="jueju">绝句</option>
+                <option value="lvshi" selected>律诗</option>
+              </select>
+            </label>
+          </div>
+
+          <div id="songci-options" class="option-group" hidden>
+            <label class="field">
+              <span>词牌</span>
+              <select id="cipai"></select>
+            </label>
+            <label class="field">
+              <span>变体</span>
+              <select id="variant"></select>
+            </label>
+          </div>
+        </div>
+
+        <div class="rule-options">
+          <fieldset class="polyphonic-switch">
+            <legend>多音字</legend>
+            <label>
+              <input type="radio" name="polyphonic-mode" value="strict">
+              <span>严格</span>
+            </label>
+            <label>
+              <input type="radio" name="polyphonic-mode" value="permissive" checked>
+              <span>放行</span>
+            </label>
+          </fieldset>
+          <label id="aojiu-control" class="toggle-control">
+            <input id="allow-aojiu" type="checkbox">
+            <span class="toggle-track" aria-hidden="true"></span>
+            <span>拗救</span>
+          </label>
+        </div>
+
+        <section id="meter-template" class="meter-template" hidden aria-live="polite">
+          <div class="section-label">格律模板</div>
+          <div id="template-content"></div>
+        </section>
+
+        <label class="field poem-input">
+          <span>诗词正文</span>
+          <textarea id="poem-text" rows="7" placeholder="请粘贴诗词正文，可使用标点或换行分句"></textarea>
+        </label>
+
+        <div class="form-actions">
+          <button id="check-button" type="submit">开始检查</button>
+          <span id="form-status" role="status"></span>
+        </div>
+      </form>
+    </section>
+
+    <section id="result-panel" class="panel result-panel" hidden aria-labelledby="result-heading">
+      <div class="result-header">
+        <div>
+          <h2 id="result-heading">检查结果</h2>
+          <p id="result-meta"></p>
+        </div>
+        <div class="scores">
+          <div class="score"><span>结构</span><strong id="structure-score">0</strong><small>分</small></div>
+          <div class="score"><span>平仄</span><strong id="tonal-score">0</strong><small>分</small></div>
+          <div class="score"><span>押韵</span><strong id="rhyme-score">0</strong><small>分</small></div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span><b>黑体</b> 多音字</span>
+        <span><b class="error-sample">红色</b> 格律错误</span>
+      </div>
+      <div id="issues" class="issues" hidden></div>
+      <div id="line-results" class="line-results"></div>
+      <div id="rhyme-results" class="rhyme-results"></div>
+    </section>
+    </div>
+  </main>
+
+  <script type="module" src="./app.js?v=4"></script>
+</body>
+</html>

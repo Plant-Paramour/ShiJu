@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+
+虚拟环境： `C:\ProgramData\anaconda3\envs\ShiJu`
+
 ## 项目概述
 
 诗矩是一个基于 HuggingFace `LogitsProcessor` 的中国古典诗词约束生成系统。系统在模型逐 token 生成时，根据字数、句读、平仄和韵部规则筛选候选 token。
@@ -10,6 +13,14 @@
 - 格律模板严格约束型：当前用于宋词，从 `Songci_Meter/*.json` 读取逐字平仄、句读、阕结构和韵组。
 
 骈文、曲牌和歌词尚未接入。
+
+## 工程文档
+
+- `docs/API.md`：面向调用者的 Python 接口、配置参数、支持矩阵、底层协议和错误说明。
+- `docs/DEVELOPMENT.md`：面向开发者的模块边界、生成生命周期、约束顺序、扩展方法、数据格式和测试门槛。
+- `web/prosody-checker/README.md`：独立格律检查前端的运行、评分规则、数据依赖和部署说明。
+
+修改公共配置、任务工厂、约束协议或数据格式时，必须同步更新以上文档。`CLAUDE.md` 只保留项目级快速上下文，详细参数以 `docs/API.md` 为准。
 
 ## 当前结构
 
@@ -29,6 +40,8 @@ shiju/
 Rhyme/*.json            # 韵书
 Songci_Meter/*.json     # 宋词格律模板
 tests/                  # 不依赖真实模型的单元与回归测试
+evaluation/             # 论文批量评估代码与评估输入输出
+web/prosody-checker/    # 可独立部署的浏览器端格律检查系统
 output/                 # 生成结果
 ```
 
@@ -54,6 +67,15 @@ python main.py
 pip install -e ".[dev]"
 pytest
 ```
+
+运行格律检查前端（必须从仓库根目录启动静态服务器）：
+
+```bash
+python -m http.server 8000 --bind 127.0.0.1
+```
+
+浏览器访问 `http://127.0.0.1:8000/web/prosody-checker/`。前端核心测试使用
+`node --test web/prosody-checker/tests/core.test.mjs`。
 
 `main.py` 中保留模型路径、量化、诗体、主题、采样参数和输出设置。`one-shot` 与 `completion` Prompt 仍需要仓库外部的 `PoeTone-main/data/cipai_data.json`，当前仓库不提供该数据，因此不是自包含工作流。
 
@@ -124,4 +146,14 @@ TaskRequest(
 - 唐诗保留完整 verifier、核心规则兜底和最终放行三级策略。
 - 句内 token 不得跨越 `/` 指定的边界；边界两侧形成常见双字词时会施加粘连惩罚。
 
-本仓库不包含评估模块，也没有拆分出的诗体专用处理器文件；说明文档只描述当前实际存在的核心生成链路。
+`evaluation/` 保留论文批量评估程序；`web/prosody-checker/` 将其中的平仄与押韵业务改写为无模型、无后端状态的浏览器端检查器。两者与 `shiju/` 的约束生成链路相互独立，但共享 `Rhyme/` 和 `Songci_Meter/` 数据。
+
+## 工程化边界
+
+- 当前公开运行入口是 `shiju.app.run(AppConfig)`，不是 HTTP API；服务化时应在外层增加请求校验和结果存储。
+- 格律检查器公开的是 `web/prosody-checker/core.js` 的纯函数接口，不提供 HTTP JSON API；当前数据规模下优先静态部署，不在 2 核 2G 服务器上增加无必要的应用进程。
+- 格律检查器默认采用多音字放行、拗救关闭；页面可切换严格多音字模式和拗救。宋词只应用多音字模式，不应用拗救。
+- 一次生成必须独占自己的 `GenerationStateMachine`、constraint session 和 logits processor，禁止跨请求共享。
+- 新诗体应通过 profile/session、policy、separator policy 和 task factory 接入，不能复制模型生成循环。
+- 约束规则属于硬约束，prompt 中的主题、对仗、自然度等要求仍属于模型软约束；两者不能混写。
+- `strict_polyphonic` 默认开启。新增涉及多音字的规则时，必须同时验证严格模式和放行模式。
