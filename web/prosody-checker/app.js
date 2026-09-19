@@ -1,11 +1,12 @@
 import {
   buildLexicon,
   evaluateHaiku,
+  evaluateBestTangForm,
   evaluatePailv,
   evaluateSongci,
   evaluateTang,
   formatMeterTemplate,
-} from "./core.js?v=4";
+} from "./core.js?v=6";
 
 const RHYME_BOOKS = {
   Xinyun: "Xinyun.json",
@@ -35,6 +36,8 @@ const elements = {
   cipai: document.querySelector("#cipai"),
   variant: document.querySelector("#variant"),
   polyphonicInputs: [...document.querySelectorAll("[name='polyphonic-mode']")],
+  smartForm: document.querySelector("#smart-form"),
+  smartFormControl: document.querySelector("#smart-form-control"),
   allowAoJiu: document.querySelector("#allow-aojiu"),
   aoJiuControl: document.querySelector("#aojiu-control"),
   meterTemplate: document.querySelector("#meter-template"),
@@ -48,6 +51,8 @@ const elements = {
   tonalScore: document.querySelector("#tonal-score"),
   rhymeScore: document.querySelector("#rhyme-score"),
   issues: document.querySelector("#issues"),
+  aoJiuLegend: document.querySelector("#aojiu-legend"),
+  detectionSummary: document.querySelector("#detection-summary"),
   lineResults: document.querySelector("#line-results"),
   rhymeResults: document.querySelector("#rhyme-results"),
 };
@@ -85,9 +90,10 @@ function selectedType() {
 }
 
 function evaluationOptions() {
+  const polyphonicMode = elements.polyphonicInputs.find((input) => input.checked).value;
   return {
-    strictPolyphonic: elements.polyphonicInputs.find((input) => input.checked).value
-      === "strict",
+    polyphonicMode,
+    strictPolyphonic: polyphonicMode === "strict",
     allowAoJiu: elements.allowAoJiu.checked,
   };
 }
@@ -142,6 +148,9 @@ function updateTypeView() {
   elements.meterTemplate.hidden = type !== "songci";
   elements.allowAoJiu.disabled = type === "songci";
   elements.aoJiuControl.classList.toggle("disabled", type === "songci");
+  const canSmartSelect = type === "tang" || type === "pailv";
+  elements.smartForm.disabled = !canSmartSelect;
+  elements.smartFormControl.classList.toggle("disabled", !canSmartSelect);
   elements.status.textContent = "";
   if (type === "songci") renderTemplate();
 }
@@ -153,32 +162,133 @@ function appendCharacterRow(container, characters, property) {
     const span = document.createElement("span");
     span.className = property;
     if (item.polyphonic) span.classList.add("polyphonic");
+    if (item.roles?.includes("ao")) span.classList.add("ao");
+    if (item.roles?.includes("rescue")) span.classList.add("rescue");
     if (item.error) span.classList.add("error");
     if (property === "tone" && item.tone.includes("/")) span.classList.add("multi-label");
     span.textContent = property === "char" ? item.char : item.tone;
-    if (item.expected) span.title = "此处要求：" + item.expected;
+    const hints = [];
+    if (item.roles?.includes("ao")) hints.push("拗字");
+    if (item.roles?.includes("rescue")) hints.push("救字");
+    if (item.expected) {
+      hints.push((item.roles?.length ? "标准句式此处要求：" : "此处要求：") + item.expected);
+    }
+    if (item.decisionReason) hints.push("自动判断：" + item.decisionReason);
+    if (hints.length) span.title = hints.join("；");
     row.append(span);
   }
   container.append(row);
 }
 
+function appendSummaryGroup(container, title, items, emptyText, className) {
+  const group = document.createElement("details");
+  group.className = "detection-group " + className;
+  const heading = document.createElement("summary");
+  heading.textContent = title;
+  group.append(heading);
+
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "summary-empty";
+    empty.textContent = emptyText;
+    group.append(empty);
+  } else {
+    const list = document.createElement("ul");
+    for (const item of items) {
+      const row = document.createElement("li");
+      row.textContent = item;
+      list.append(row);
+    }
+    group.append(list);
+  }
+  container.append(group);
+}
+
+function renderDetectionSummary(result) {
+  const aoJiu = result.aoJiu;
+  const polyphonicDecisions = result.polyphonicDecisions ?? [];
+  const hasPolyphonic = result.lines?.some((line) =>
+    line.characters.some((character) => character.polyphonic));
+  elements.detectionSummary.replaceChildren();
+  elements.detectionSummary.hidden = !aoJiu && !hasPolyphonic;
+  elements.aoJiuLegend.hidden = !aoJiu?.enabled;
+  if (!aoJiu && !hasPolyphonic) return;
+  elements.detectionSummary.classList.toggle(
+    "has-two-groups",
+    Boolean(aoJiu && hasPolyphonic),
+  );
+
+  if (hasPolyphonic) {
+    appendSummaryGroup(
+      elements.detectionSummary,
+      "多音字判定",
+      polyphonicDecisions.map((item) => item.message),
+      "未发现需要单独判断的多音字。",
+      "polyphonic-summary",
+    );
+  }
+
+  if (aoJiu) {
+    appendSummaryGroup(
+      elements.detectionSummary,
+      "拗救判定",
+      aoJiu.details.map((item) => item.message),
+      aoJiu.enabled ? "未识别到需要拗救的句式。" : "未启用拗救。",
+      "aojiu-summary",
+    );
+  }
+
+  const detectionGroups = [...elements.detectionSummary.querySelectorAll(":scope > details")];
+  detectionGroups.forEach((group) => {
+    group.open = true;
+    group.addEventListener("toggle", () => {
+      for (const other of detectionGroups) {
+        if (other !== group && other.open !== group.open) other.open = group.open;
+      }
+    });
+  });
+
+  const violations = (result.violations ?? []).map((item) =>
+    "第 " + (item.lineIndex + 1) + " 句第 " + (item.charIndex + 1)
+      + " 字“" + item.char + "”：" + item.rule + "，应" + item.required + "。");
+  const standard = document.createElement("div");
+  standard.className = "standard-summary";
+  const standardHeading = document.createElement("h4");
+  standardHeading.textContent = "标准句式";
+  standard.append(standardHeading);
+  const standardStatus = document.createElement("p");
+  standardStatus.className = violations.length ? "has-violations" : "is-clear";
+  standardStatus.textContent = violations.length
+    ? violations.join("\n")
+    : "未发现不可救的平仄错误。";
+  standard.append(standardStatus);
+  elements.detectionSummary.append(standard);
+}
+
+function charCountLabel(charCount) {
+  return { 5: "五", 7: "七" }[Number(charCount)] ?? String(charCount);
+}
+
 function resultMeta(result, type, variant) {
+  const smartMeta = result.stats.autoMatched
+    ? " · 智能选式 · 综合 " + result.stats.comprehensiveScore.toFixed(2).replace(/\.00$/, "")
+    : "";
   if (type === "songci") {
     return elements.cipai.selectedOptions[0].text + " · " + variant.name
-      + " · " + (variant.rhyme_type || "未标注韵式");
+      + " · " + (variant.rhyme_type || "未标注韵式") + smartMeta;
   }
   if (type === "tang") {
     const form = elements.tangForm.value === "jueju" ? "绝句" : "律诗";
-    return result.stats.charCount + "言" + form + " · "
+    return charCountLabel(result.stats.charCount) + "言" + form + " · "
       + (result.stats.globalBase ?? "未定") + "起 · "
-      + result.stats.rhymeTone + "韵";
+      + result.stats.rhymeTone + "韵" + smartMeta;
   }
   if (type === "pailv") {
-    return result.stats.charCount + "言排律 · "
+    return charCountLabel(result.stats.charCount) + "言排律 · "
       + (result.stats.globalBase ?? "未定") + "起 · "
-      + result.stats.rhymeTone + "韵";
+      + result.stats.rhymeTone + "韵" + smartMeta;
   }
-  return "五七五俳句";
+  return "五七五俳句" + smartMeta;
 }
 
 function renderResult(result, type, variant) {
@@ -196,6 +306,8 @@ function renderResult(result, type, variant) {
       elements.issues.append(div);
     }
   }
+
+  renderDetectionSummary(result);
 
   elements.lineResults.replaceChildren();
   result.lines.forEach((line) => {
@@ -236,12 +348,28 @@ async function runCheck(event) {
   elements.button.disabled = true;
   elements.button.textContent = "检查中";
   try {
-    const type = selectedType();
+    let type = selectedType();
     const lexicon = await getLexicon(elements.rhymeBook.value);
     const options = evaluationOptions();
     let result;
     let variant = null;
-    if (type === "songci") {
+    if ((type === "tang" || type === "pailv") && elements.smartForm.checked) {
+      const best = evaluateBestTangForm(text, lexicon, options, {
+        type,
+        charCount: elements.tangLength.value,
+        form: elements.tangForm.value,
+      });
+      result = best.result;
+      result.stats.comprehensiveScore = best.score;
+      result.stats.autoMatched = true;
+      type = best.type;
+      elements.typeInputs.find((input) => input.value === type).checked = true;
+      if (type === "tang") {
+        elements.tangLength.value = String(best.charCount);
+        elements.tangForm.value = best.form;
+      }
+      updateTypeView();
+    } else if (type === "songci") {
       variant = await currentVariant();
       result = evaluateSongci(text, variant, lexicon, options);
     } else if (type === "tang") {

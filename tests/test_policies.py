@@ -60,7 +60,7 @@ def test_tang_full_verifier_rejects_forbidden_character_but_critical_allows_it()
     assert TangVerifierPolicy(lexicon, "critical").evaluate(12, context) == 0.0
 
 
-def test_pailv_rejects_ambiguous_three_same_tail_before_last_character():
+def test_pailv_strict_mode_rejects_an_ambiguous_illegal_even_position():
     tokenizer = FakeTokenizer({20: "重"})
     lexicon = FakeLexicon()
     lexicon.tones["重"] = ["平", "仄"]
@@ -103,7 +103,7 @@ def test_pailv_rejects_ambiguous_three_same_tail_before_last_character():
     assert strict.evaluate(20, context) is None
 
 
-def test_pailv_rejects_ambiguous_three_same_tail_two_characters_early():
+def test_pailv_allows_possible_three_oblique_tail_two_characters_early():
     tokenizer = FakeTokenizer({20: "藏"})
     lexicon = FakeLexicon()
     lexicon.tones["藏"] = ["平", "仄"]
@@ -143,10 +143,10 @@ def test_pailv_rejects_ambiguous_three_same_tail_two_characters_early():
     )
 
     assert permissive.evaluate(20, context) == 0.0
-    assert strict.evaluate(20, context) is None
+    assert strict.evaluate(20, context) == 0.0
 
 
-def test_tang_dynamic_programming_rejects_prefix_with_no_legal_ending():
+def test_tang_dynamic_programming_allows_non_rhyming_three_oblique_ending():
     tokenizer = FakeTokenizer({20: "夜", 21: "花"})
     lexicon = FakeLexicon()
     vocab = FakeVocab(tokenizer, lexicon)
@@ -173,6 +173,37 @@ def test_tang_dynamic_programming_rejects_prefix_with_no_legal_ending():
     context = CandidateContext(state, relational, tokenizer, vocab)
     policy = TangVerifierPolicy(lexicon, enforce_style=False)
 
-    # 选“夜”后，第六字按格律只能为仄：平收犯孤平，仄收成三仄尾。
-    assert policy.evaluate(20, context) is None
+    # 非韵句允许三仄尾；这里只拒绝无法完成明确句式的前缀。
+    assert policy.evaluate(20, context) == 0.0
     assert policy.evaluate(21, context) == 0.0
+
+
+def test_pailv_policy_enforces_deferred_cross_line_rescue():
+    tokenizer = FakeTokenizer({20: "山", 21: "雨"})
+    lexicon = FakeLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    state = GenerationState(
+        line_index=1,
+        char_index=2,
+        current_line_text="雨山",
+        all_text="雨雨雨雨雨雨山",
+        step=StepKind.TEXT,
+        line=LineLayout(length=5, break_positions=frozenset({2})),
+    )
+    relational = RelationalConstraintContext(
+        current_line=1,
+        current_char_idx=2,
+        target_length=5,
+        is_rhyming=True,
+        locked_rhyme_parts=None,
+        excluded_rhyme_parts=None,
+        rhyme_type="平韵",
+        base_tone=0,
+        global_base_tone=1,
+        line0_rhymes=False,
+    )
+    context = CandidateContext(state, relational, tokenizer, vocab)
+    policy = TangVerifierPolicy(lexicon, allow_aojiu=True, enforce_style=False)
+
+    assert policy.evaluate(20, context) == 0.0
+    assert policy.evaluate(21, context) is None

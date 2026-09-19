@@ -95,6 +95,7 @@ run(config)
 | `cipai_data_path` | `str` | `"PoeTone-main/data/cipai_data.json"` | 宋词非 instruction 任务所需的外部词牌数据路径。当前仓库不提供该文件。 |
 | `num_lines` | `int | None` | `None` | 排律句数。排律必须单独指定为不少于 10 的偶数；其他诗体忽略该字段。 |
 | `hanpai` | `HanpaiOptions` | 默认实例 | 汉俳专用配置。 |
+| `tang` | `TangOptions` | 默认实例 | 绝句与律诗专用配置。 |
 | `pailv` | `PailvOptions` | 默认实例 | 排律专用配置。 |
 
 `strict_polyphonic` 是全局任务参数，而不是只对排律生效的开关。底层直接使用 `VocabIndex` 或 verifier 时，也可以通过同名参数单独选择模式。
@@ -116,7 +117,15 @@ run(config)
 
 `HanpaiOptions.__post_init__` 会校验三种季语配置互斥、字符串非空以及候选集合没有空值。
 
-### 3.3 `PailvOptions`
+### 3.3 `TangOptions`
+
+位置：`shiju.tasks.TangOptions`
+
+| 参数 | 类型 | 默认值 | 含义 |
+| --- | --- | --- | --- |
+| `allow_aojiu` | `bool` | `False` | 是否允许绝句、律诗使用与 Web 检查器一致的本句自救、特拗交换和对句相救。 |
+
+### 3.4 `PailvOptions`
 
 位置：`shiju.tasks.PailvOptions`
 
@@ -124,7 +133,7 @@ run(config)
 | --- | --- | --- | --- |
 | `allow_aojiu` | `bool` | `True` | 排律是否允许拗救。排律固定平韵，首句可押可不押，偶数句押韵并锁定同一韵部。 |
 
-### 3.4 支持矩阵
+### 3.5 支持矩阵
 
 | `meter_type` | `form_name` | 主要约束 |
 | --- | --- | --- |
@@ -135,7 +144,7 @@ run(config)
 
 格式解析函数分别为 `parse_tang_format`、`parse_pailv_format` 和 `parse_hanpai_format`。格式不支持或排律句数非法时抛出 `ValueError`。
 
-### 3.5 格式解析函数
+### 3.6 格式解析函数
 
 这些函数只做格式参数解析，不访问模型或文件。
 
@@ -358,6 +367,7 @@ evaluate(token_id, context) -> float | None
 | `evaluateSongci(text, variant, lexicon, options?)` | 正文、词牌变体、韵书查询对象和可选判定参数 | 按指定词牌变体逐字检查；拗救参数不适用于模板型宋词。 |
 | `evaluateTang(text, options, lexicon)` | `options.charCount` 为 `5` 或 `7`；`options.form` 为 `jueju` 或 `lvshi` | 按用户指定的字数和绝句/律诗检查。除 `jueju` 外当前均按八句律诗处理。 |
 | `evaluatePailv(text, lexicon, options?)` | 正文、韵书查询对象和可选判定参数 | 自动从有效句中判定五言或七言，并要求不少于十句的偶数句。 |
+| `evaluateBestTangForm(text, lexicon, options?, current?)` | 正文、韵书查询对象、可选判定参数和当前诗式 | 比较五/七言绝句、律诗与排律，返回结构、平仄、押韵三项算术平均分最高的候选；同分时优先保持当前诗式。 |
 | `evaluateHaiku(text, lexicon, options?)` | 正文、韵书查询对象和可选判定参数 | 按三行 `5-7-5` 检查。其平仄规则是本项目汉俳约束的前端适配，不是论文原评估器的覆盖项。 |
 
 `text` 接受中文标点、英文标点和换行。`lexicon` 必须是 `buildLexicon` 的返回值。宋词 `variant` 对应 `Songci_Meter/*.json` 中 `variants` 的单个元素。
@@ -367,6 +377,7 @@ evaluate(token_id, context) -> float | None
 | 参数 | 类型 | 默认值 | 含义 |
 | --- | --- | --- | --- |
 | `strictPolyphonic` | `boolean` | `false` | `true` 时一个字的所有韵书读音均须满足当前平仄或韵部；`false` 时存在一个合法读音即可。 |
+| `polyphonicMode` | `automatic`、`strict` 或 `permissive` | 未指定 | `automatic` 按平仄、韵部和拗救上下文选定读法；另两项分别对应严格和放行。未指定时兼容旧的 `strictPolyphonic` 参数。 |
 | `allowAoJiu` | `boolean` | `false` | 是否接受唐诗、排律和俳句中符合规则的相邻平声拗救。宋词忽略此参数。 |
 
 唐诗的两个参数与 `charCount`、`form` 放在同一个 `options` 对象中；其他评分器使用独立的第四或第三个可选参数对象。
@@ -383,9 +394,10 @@ evaluate(token_id, context) -> float | None
 | `errors` | `Set<string>` | 错误位置集合，键格式为 `句索引:字索引`，索引从 0 开始。 |
 | `issues` | `string[]` | 字数、句数等结构问题。 |
 | `rhymeGroups` | `RhymeGroup[]` | 每个韵组的韵脚、主韵部、匹配数和组分。 |
+| `polyphonicDecisions` | `PolyphonicDecision[]` | 自动模式下已按上下文选定读法的多音字位置、声调、韵部、理由和展示文案。 |
 | `stats` | `object` | 参与评分字符数、匹配数及诗体专用统计。 |
 
-逐字对象的关键字段为：`char` 原字、`tone` 展示平仄、`tones` 可选平仄、`polyphonic` 是否多音、`error` 是否错误、`expected` 当前位置期望。一个字同时是多音字和错误字时，错误状态优先显示红色粗体。
+逐字对象的关键字段为：`char` 原字、`tone` 展示平仄、`tones` 可选平仄、`polyphonic` 是否多音、`error` 是否错误、`expected` 当前位置期望。自动模式还会提供 `selectedTone`、`selectedPart` 和 `decisionReason`。一个字同时是多音字和错误字时，错误状态优先显示红色粗体。
 
 ### 8.4 分数公式
 
@@ -397,7 +409,7 @@ evaluate(token_id, context) -> float | None
 - 单韵组押韵分：`命中主韵部的韵脚数 / 该组有效韵脚数 * 100`。主韵部是该组韵脚中出现次数最多的韵部。
 - 宋词存在多个韵组时，最终押韵分取各韵组得分的算术平均。
 
-页面展示结构、平仄和押韵三项分数，不展示论文批量评估中的加权总分；结构错误同时列在 `issues`。
+页面展示结构、平仄和押韵三项分数；智能选式另用三项算术平均进行候选比较并在摘要显示。它不是论文批量评估中的加权总分；结构错误同时列在 `issues`。
 
 ### 8.5 页面参数映射
 
@@ -409,7 +421,8 @@ evaluate(token_id, context) -> float | None
 | 唐诗篇式 | `jueju`、`lvshi` | 期望四句或八句。 |
 | 宋词词牌 | `Songci_Meter/*.json` 文件 | 选择词牌模板。 |
 | 宋词变体 | 模板 `variants[].name` | 选择具体逐字格律和韵组。 |
-| 多音字 | `strict`、`permissive` | 分别映射为 `strictPolyphonic: true` 和 `false`。默认放行。 |
+| 多音字 | `automatic`、`strict`、`permissive` | 映射为 `polyphonicMode`，其中自动模式为页面默认值。 |
+| 智能选式 | 开、关 | 唐诗和排律开启时调用 `evaluateBestTangForm`；宋词和俳句禁用。默认开启。 |
 | 拗救 | 开、关 | 映射为 `allowAoJiu`。默认关闭；宋词模式禁用。 |
 
-无论采用哪种多音字模式，多音字仍以黑体提示人工复核。严格模式的量词语义与生成接口 `TaskRequest.strict_polyphonic=True` 一致。
+无论采用哪种多音字模式，多音字仍以黑体标注。自动模式会展示系统采用的上下文读法，未能由规则唯一确定的字仍保留“平/仄”供人工复核。严格模式的量词语义与生成接口 `TaskRequest.strict_polyphonic=True` 一致。

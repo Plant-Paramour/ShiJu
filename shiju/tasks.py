@@ -84,6 +84,13 @@ class PailvOptions:
 
 
 @dataclass(frozen=True)
+class TangOptions:
+    """绝句与律诗的专用格律配置。"""
+
+    allow_aojiu: bool = False
+
+
+@dataclass(frozen=True)
 class TaskRequest:
     meter_type: str
     form_name: str
@@ -96,6 +103,7 @@ class TaskRequest:
     cipai_data_path: str = "PoeTone-main/data/cipai_data.json"
     num_lines: int | None = None
     hanpai: HanpaiOptions = field(default_factory=HanpaiOptions)
+    tang: TangOptions = field(default_factory=TangOptions)
     pailv: PailvOptions = field(default_factory=PailvOptions)
 
 
@@ -185,6 +193,8 @@ class RelationalTaskFactory:
             num_lines=num_lines,
             rhyme_type=rhyme_type,
             lexicon=context.lexicon,
+            allow_aojiu=request.tang.allow_aojiu,
+            strict_polyphonic=request.strict_polyphonic,
         )
         boundary = BoundaryCoherencePolicy(
             context.vocab.common_bigrams(), context.boundary_coherence_penalty
@@ -198,6 +208,7 @@ class RelationalTaskFactory:
             requirement=request.requirement,
             use_thinking=request.use_thinking,
             rhyme_dict_name=request.rhyme_dict_name,
+            allow_aojiu=request.tang.allow_aojiu,
         )
         return TaskRuntime(
             profile=profile,
@@ -210,6 +221,7 @@ class RelationalTaskFactory:
                         TangVerifierPolicy(
                             context.lexicon,
                             "full",
+                            allow_aojiu=request.tang.allow_aojiu,
                             strict_polyphonic=request.strict_polyphonic,
                         ),
                         boundary,
@@ -221,6 +233,7 @@ class RelationalTaskFactory:
                         TangVerifierPolicy(
                             context.lexicon,
                             "critical",
+                            allow_aojiu=request.tang.allow_aojiu,
                             strict_polyphonic=request.strict_polyphonic,
                         ),
                     ),
@@ -304,6 +317,7 @@ class PailvTaskFactory:
             rhyme_type="平韵",
             lexicon=context.lexicon,
             allow_aojiu=request.pailv.allow_aojiu,
+            strict_polyphonic=request.strict_polyphonic,
         )
         boundary = BoundaryCoherencePolicy(
             context.vocab.common_bigrams(), context.boundary_coherence_penalty

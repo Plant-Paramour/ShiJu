@@ -123,6 +123,9 @@ def has_viable_tang_completion(
     *,
     allow_aojiu: bool = False,
     strict_polyphonic: bool = True,
+    is_first_line: bool = False,
+    rhyme_tone: int = 0,
+    require_cross_rescue: bool = False,
 ) -> bool:
     """判断关系型诗句的当前前缀能否补成合法的完整平仄序列。"""
     tone_options = tuple(
@@ -137,7 +140,166 @@ def has_viable_tang_completion(
         end_tone,
         allow_aojiu,
         strict_polyphonic,
+        is_first_line,
+        rhyme_tone,
+        require_cross_rescue,
     )
+
+
+def tang_line_requires_cross_rescue(
+    text: str,
+    target_length: int,
+    line_tone: int,
+    rhyme_tone: int,
+    lexicon: RhymeLookup,
+    *,
+    is_first_line: bool = False,
+    strict_polyphonic: bool = True,
+) -> bool:
+    """判断已完成的出句是否把四/六拗的救位留给下一句。"""
+    tone_options = tuple(
+        tuple(dict.fromkeys(lexicon.get_pingze(char))) for char in text
+    )
+    if len(tone_options) != target_length or any(not tones for tones in tone_options):
+        return False
+
+    pending: list[bool] = []
+    first_line_rhymes = _first_line_rhymes(
+        tone_options,
+        rhyme_tone,
+        strict_polyphonic,
+    ) if is_first_line else None
+    for tones in product(*tone_options):
+        resolved = _resolve_tang_line_tone(tones, line_tone)
+        if not _tang_tones_are_valid(
+            tones,
+            target_length,
+            resolved,
+            2 if is_first_line else 1 - rhyme_tone,
+            True,
+            is_first_line,
+            rhyme_tone,
+            False,
+            first_line_rhymes,
+        ):
+            continue
+        pending.append(_has_unresolved_major_ao(tones, target_length, resolved))
+
+    if not pending:
+        return False
+    return any(pending) if strict_polyphonic else all(pending)
+
+
+def _resolve_tang_line_tone(tones: tuple[str, ...], line_tone: int) -> int:
+    if line_tone != 2:
+        return line_tone
+    return 0 if tones[1] == "平" else 1
+
+
+def _expected_tone_at(position: int, target_length: int, line_tone: int) -> str | None:
+    if position == 1 or (target_length == 7 and position == 5):
+        return "平" if line_tone == 0 else "仄"
+    if position == 3:
+        return "仄" if line_tone == 0 else "平"
+    return None
+
+
+def _has_unresolved_major_ao(
+    tones: tuple[str, ...],
+    target_length: int,
+    line_tone: int,
+) -> bool:
+    key_position = target_length - 2
+    rescue_position = key_position - 1
+    expected = _expected_tone_at(key_position, target_length, line_tone)
+    return (
+        expected == "平"
+        and tones[key_position] == "仄"
+        and tones[rescue_position] != "平"
+    )
+
+
+def _first_line_rhymes(
+    tone_options: tuple[tuple[str, ...], ...],
+    rhyme_tone: int,
+    strict_polyphonic: bool,
+) -> bool:
+    rhyme_value = "平" if rhyme_tone == 0 else "仄"
+    last_options = tone_options[-1]
+    if strict_polyphonic:
+        return bool(last_options) and all(tone == rhyme_value for tone in last_options)
+    return rhyme_value in last_options
+
+
+def _tang_tones_are_valid(
+    tones: tuple[str, ...],
+    target_length: int,
+    line_tone: int,
+    end_tone: int,
+    allow_aojiu: bool,
+    is_first_line: bool,
+    rhyme_tone: int,
+    require_cross_rescue: bool,
+    first_line_rhymes: bool | None = None,
+) -> bool:
+    if end_tone != 2 and tones[-1] != ("平" if end_tone == 0 else "仄"):
+        return False
+
+    rhyme_value = "平" if rhyme_tone == 0 else "仄"
+    is_rhyming = end_tone == rhyme_tone or (
+        is_first_line
+        and (
+            first_line_rhymes
+            if first_line_rhymes is not None
+            else tones[-1] == rhyme_value
+        )
+    )
+    key_position = target_length - 2
+    rescue_position = key_position - 1
+
+    for position in (1, 3, 5):
+        if position >= target_length:
+            continue
+        expected = _expected_tone_at(position, target_length, line_tone)
+        if tones[position] == expected:
+            continue
+        if not allow_aojiu or rhyme_tone != 0 or is_rhyming or position != key_position:
+            return False
+
+        # 出句只允许倒数第二个关键偶数位的两种定式：
+        # 该平而仄时由前一奇数位本句救或留待对句救；该仄而平时必须构成特拗交换。
+        if expected == "平" and tones[position] == "仄":
+            continue
+        if (
+            expected == "仄"
+            and tones[position] == "平"
+            and tones[rescue_position] == "仄"
+            and tones[rescue_position - 2] == "平"
+        ):
+            continue
+        return False
+
+    if require_cross_rescue and tones[rescue_position] != "平":
+        return False
+
+    if is_rhyming:
+        if tones[-3:] == (rhyme_value, rhyme_value, rhyme_value):
+            return False
+        if rhyme_tone == 0:
+            non_rhyme_ping_positions = [
+                position
+                for position, tone in enumerate(tones[:-1])
+                if tone == "平"
+            ]
+            if line_tone == 0 and non_rhyme_ping_positions == [1]:
+                return False
+            if (
+                line_tone == 1
+                and target_length == 7
+                and non_rhyme_ping_positions == [3]
+            ):
+                return False
+    return True
 
 
 @lru_cache(maxsize=8192)
@@ -148,51 +310,32 @@ def _has_viable_tang_tones(
     end_tone: int,
     allow_aojiu: bool,
     strict_polyphonic: bool,
+    is_first_line: bool,
+    rhyme_tone: int,
+    require_cross_rescue: bool,
 ) -> bool:
     if len(tone_options) > target_length:
         return False
 
+    first_line_rhymes = (
+        _first_line_rhymes(tone_options, rhyme_tone, strict_polyphonic)
+        if is_first_line and len(tone_options) == target_length
+        else None
+    )
+
     def full_line_is_valid(tones: tuple[str, ...]) -> bool:
-        resolved_line_tone = line_tone
-        if resolved_line_tone == 2:
-            resolved_line_tone = 0 if tones[1] == "平" else 1
-
-        expected_positions = (
-            (1, resolved_line_tone),
-            (3, 1 - resolved_line_tone),
-            (5, resolved_line_tone),
+        resolved_line_tone = _resolve_tang_line_tone(tones, line_tone)
+        return _tang_tones_are_valid(
+            tones,
+            target_length,
+            resolved_line_tone,
+            end_tone,
+            allow_aojiu,
+            is_first_line,
+            rhyme_tone,
+            require_cross_rescue,
+            first_line_rhymes,
         )
-        for position, expected_value in expected_positions:
-            if position >= target_length:
-                continue
-            expected = "平" if expected_value == 0 else "仄"
-            if tones[position] == expected:
-                continue
-            rescued = False
-            if allow_aojiu and resolved_line_tone == 0 and position == 3:
-                rescued = tones[0] == tones[2] == "仄" and tones[-1] == "平"
-            elif allow_aojiu and resolved_line_tone == 1 and position == 5:
-                rescued = tones[2] == tones[4] == "仄" and tones[-1] == "平"
-            if not rescued:
-                return False
-
-        if end_tone != 2 and tones[-1] != ("平" if end_tone == 0 else "仄"):
-            return False
-        if len(set(tones[-3:])) == 1:
-            return False
-
-        if tones[-1] == "平":
-            if resolved_line_tone == 0:
-                isolated = tones[0] == tones[2] == "仄"
-                rescued = allow_aojiu and tones[3] == "平"
-                if isolated and not rescued:
-                    return False
-            elif resolved_line_tone == 1 and target_length >= 7:
-                isolated = tones[2] == tones[4] == "仄"
-                rescued = allow_aojiu and tones[5] == "平"
-                if isolated and not rescued:
-                    return False
-        return True
 
     prefixes = tuple(tuple(tones) for tones in product(*tone_options))
 

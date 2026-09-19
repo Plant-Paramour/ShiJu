@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="style/color.css">
+    <link rel="stylesheet" href="style/style.css">
+    <script src="src/io.js"></script>
+    <script src="src/constants.js"></script>
+    <script src="src/meter.js"></script>
+    <script src="src/app.js" defer></script>
+    <script src="src/menu.js" defer></script>
+    <title>COPE</title>
+  </head>
+  <body>
+    <div class="titleBar noSelect">COPE
+      <div class="ribbon">
+        韵书<select class="selectRhymebook"></select>&nbsp;&nbsp;&nbsp;&nbsp;
+        格律
+          <select class="selectMeterGroup">
+          </select>
+          <select class="selectMeter"></select>
+        <button class="btnOpenPanel"></button>
+      </div>
+    </div>
+
+    <div class="main">
+
+    </div>
+    <div class="panel panelHidden">
+      <div class="panelInner">
+        <select class="selectRhymeGroup"></select>
+        <input class="searchInput"></input>
+        <div class="panelMain"></div>
+        <div class="panelDict"></div>
+      </div>
+    </div>
+  </body>
+</html>

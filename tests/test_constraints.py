@@ -54,7 +54,7 @@ def test_relational_even_line_uses_locked_rhyme():
     assert all(item.rhyme.parts == frozenset({"一"}) for item in rhyme_patterns)
 
 
-def test_relational_first_line_oblique_end_excludes_its_rhyme_parts():
+def test_relational_first_line_oblique_end_does_not_constrain_later_rhyme_parts():
     lexicon = FakeLexicon()
     profile = RelationalConstraintProfile(5, 4, "平韵", lexicon)
     controller = GenerationController(
@@ -66,7 +66,34 @@ def test_relational_first_line_oblique_end_excludes_its_rhyme_parts():
     info = controller.candidate_context()
 
     assert info.line0_rhymes is False
-    assert info.excluded_rhyme_parts == frozenset({"四"})
+    assert info.excluded_rhyme_parts is None
+
+
+def test_relational_first_line_polyphonic_end_obeys_selected_mode():
+    lexicon = FakeLexicon()
+    lexicon.tones["重"] = ["平", "仄"]
+    lexicon.parts["重"] = ["一"]
+
+    strict = RelationalConstraintProfile(
+        5, 4, "平韵", lexicon, strict_polyphonic=True
+    ).create_session()
+    permissive = RelationalConstraintProfile(
+        5, 4, "平韵", lexicon, strict_polyphonic=False
+    ).create_session()
+    strict_controller = GenerationController(
+        GenerationStateMachine(RelationalConstraintProfile(5, 4, "平韵", lexicon).layout),
+        strict,
+    )
+    permissive_controller = GenerationController(
+        GenerationStateMachine(RelationalConstraintProfile(5, 4, "平韵", lexicon).layout),
+        permissive,
+    )
+
+    strict_controller.advance("山雨山雨重")
+    permissive_controller.advance("山雨山雨重")
+
+    assert strict_controller.candidate_context().line0_rhymes is False
+    assert permissive_controller.candidate_context().line0_rhymes is True
 
 
 def test_relational_session_repeats_dual_and_sticky_pattern_for_pailv():
@@ -90,3 +117,17 @@ def test_relational_session_repeats_dual_and_sticky_pattern_for_pailv():
     controller.advance("山雨山雨山，山雨山雨山。")
     assert controller.snapshot().line_index == 4
     assert controller.candidate_context().base_tone == first_base
+
+
+def test_pailv_only_opens_major_ao_position_on_non_rhyming_lines():
+    lexicon = FakeLexicon()
+    profile = RelationalConstraintProfile(7, 12, "平韵", lexicon, allow_aojiu=True)
+    session = profile.create_session()
+    controller = GenerationController(GenerationStateMachine(profile.layout), session)
+
+    controller.advance("山山")
+    assert set(session.allowed_tones_at(controller.snapshot(), 5)) == {"平", "仄"}
+
+    controller.advance("山山山山山，")
+    assert controller.snapshot().line_index == 1
+    assert session.allowed_tones_at(controller.snapshot(), 5) == ("仄",)

@@ -3,6 +3,7 @@ from pathlib import Path
 from shiju.tasks import (
     HanpaiOptions,
     PailvOptions,
+    TangOptions,
     TaskContext,
     TaskRequest,
     default_task_registry,
@@ -30,6 +31,27 @@ def test_tang_task_does_not_read_meter_source(tmp_path):
 
     assert len(runtime.profile.layout.lines) == 8
     assert not missing_source.exists()
+
+
+def test_tang_task_propagates_aojiu_option_to_profile_policy_and_prompt(tmp_path):
+    tokenizer = FakeTokenizer()
+    lexicon = FakeLexicon()
+    vocab = FakeVocab(tokenizer, lexicon)
+    context = TaskContext(tokenizer, vocab, lexicon, tmp_path / "missing", 50.0)
+    request = TaskRequest(
+        meter_type="唐诗",
+        form_name="五言绝句",
+        theme="秋夜",
+        rhyme_dict_name="Pinshui",
+        tang=TangOptions(allow_aojiu=True),
+    )
+
+    runtime = default_task_registry().create(request, context)
+    prompt = "\n".join(message["content"] for message in runtime.messages)
+
+    assert runtime.profile.allow_aojiu is True
+    assert runtime.policy_tiers[0].policies[0]._allow_aojiu is True
+    assert "特拗交换" in prompt
 
 
 def test_template_task_reuses_resolved_default_variant_in_prompt():

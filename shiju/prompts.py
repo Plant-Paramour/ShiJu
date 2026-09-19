@@ -144,9 +144,15 @@ def _relational_task_prompt(
     line_length: int,
     num_lines: int,
     requirement: str,
+    allow_aojiu: bool,
 ) -> str:
     length_name = "五言" if line_length == 5 else "七言"
     form_type = "绝句" if num_lines == 4 else "律诗"
+    aojiu_rule = (
+        "非韵句允许四拗三救、六拗五救、特拗交换及对应的对句相救"
+        if allow_aojiu
+        else "不安排拗救"
+    )
     rules = (
         "【格律约束】\n"
         "以下格律须严格遵守：\n"
@@ -154,7 +160,7 @@ def _relational_task_prompt(
         "- 严格遵守二四六分明：第2字决定基调，第4字与第2字相反，第6字与第2字相同\n"
         "- 奇数句以仄声收尾，偶数句以平声收尾\n"
         "- 所有偶数句必须押同一韵部，一韵到底\n"
-        "- 避免孤平、三连平、三连仄\n"
+        f"- 韵句禁止孤平和三平尾，非韵句允许三仄尾；{aojiu_rule}\n"
         "- 不以“的”“些”“么”“了”等现代白话虚词入诗"
     )
     return (
@@ -180,7 +186,12 @@ def _pailv_task_prompt(
     allow_aojiu: bool,
 ) -> str:
     length_name = "五言" if line_length == 5 else "七言"
-    aojiu_rule = "允许以邻位平声完成自然拗救" if allow_aojiu else "不安排拗救"
+    aojiu_rule = (
+        "非韵句只允许四拗三救、六拗五救、特拗交换及对应的对句相救；"
+        "韵句孤平只能由第三字或第五字自救，二四六不得因拗救而放宽"
+        if allow_aojiu
+        else "不安排拗救"
+    )
     rules = (
         "【排律格律约束】\n"
         "以下格律须严格遵守：\n"
@@ -188,7 +199,7 @@ def _pailv_task_prompt(
         "- 严格遵守替、对、粘：二四六等关键位置相替、相对、相粘，整篇按联次延续\n"
         "- 偶数句以平声押韵，首句可押可不押；首句若押，必须与后文使用同一韵部\n"
         "- 除首句外，奇数句以仄声收尾；偶数句全部押同一平声韵，一韵到底，不换韵、不通押邻韵\n"
-        f"- 禁止孤平，{aojiu_rule}；句尾禁止三连平或三连仄\n"
+        f"- 韵句禁止孤平和三平尾，非韵句允许三仄尾；{aojiu_rule}\n"
         "- 对仗：首联、尾联可以不对，中间各联必须逐联对仗；允许使用扇面对等变格\n"
         "- 不以“的”“些”“么”“了”等现代白话虚词入诗"
     )
@@ -318,6 +329,7 @@ def build_relational_prompt(
     requirement: str = "",
     use_thinking: bool = True,
     rhyme_dict_name: str = "Pinshui",
+    allow_aojiu: bool = False,
 ) -> list[dict[str, str]]:
     if task_type != "instruction":
         raise ValueError(f"唐诗当前只支持 instruction，收到: {task_type}")
@@ -337,6 +349,7 @@ def build_relational_prompt(
                 line_length,
                 num_lines,
                 requirement,
+                allow_aojiu,
             ),
         },
     ]

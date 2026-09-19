@@ -323,6 +323,7 @@ class RelationalConstraintProfile:
         rhyme_type: str,
         lexicon: RhymeLookup,
         allow_aojiu: bool = False,
+        strict_polyphonic: bool = True,
     ):
         if line_length not in (5, 7):
             raise ValueError(f"唐诗仅支持五言(5)或七言(7)，收到: {line_length}")
@@ -336,6 +337,7 @@ class RelationalConstraintProfile:
         self.rhyme_type = rhyme_type.strip()
         self.lexicon = lexicon
         self.allow_aojiu = allow_aojiu
+        self.strict_polyphonic = strict_polyphonic
         breaks = frozenset({2} if line_length == 5 else {2, 4})
         self._layout = GenerationLayout(
             tuple(
@@ -361,6 +363,7 @@ class RelationalConstraintProfile:
             rhyme_type=self.rhyme_type,
             lexicon=self.lexicon,
             allow_aojiu=self.allow_aojiu,
+            strict_polyphonic=self.strict_polyphonic,
         )
 
 
@@ -372,14 +375,15 @@ class RelationalConstraintSession(BaseConstraintSession):
         rhyme_type: str,
         lexicon: RhymeLookup,
         allow_aojiu: bool = False,
+        strict_polyphonic: bool = True,
     ):
         self._line_length = line_length
         self._num_lines = num_lines
         self._rhyme_type = rhyme_type
         self._lexicon = lexicon
         self._allow_aojiu = allow_aojiu
+        self._strict_polyphonic = strict_polyphonic
         self._locked_rhyme_parts: set[str] | None = None
-        self._excluded_rhyme_parts: set[str] | None = None
         self._global_base_tone = 2
         self._line0_rhymes = False
         self._active_line = 0
@@ -406,9 +410,11 @@ class RelationalConstraintSession(BaseConstraintSession):
         base = self._current_base_tone
         if base == 2:
             return ("平", "仄")
-        if self._allow_aojiu and (
-            (position == 3 and base == 0)
-            or (position == 5 and base == 1 and self._line_length >= 7)
+        if (
+            self._allow_aojiu
+            and "平" in self._rhyme_type
+            and not self._is_rhyming_line(state.line_index)
+            and position == self._line_length - 2
         ):
             return ("平", "仄")
         if position == 1 or (position == 5 and self._line_length >= 7):
@@ -430,7 +436,7 @@ class RelationalConstraintSession(BaseConstraintSession):
                 return None
             if self._locked_rhyme_parts:
                 return RhymeConstraint.specific(expected, self._locked_rhyme_parts)
-            return RhymeConstraint.any(expected, self._excluded_rhyme_parts)
+            return RhymeConstraint.any(expected)
         if state.line_index == 0:
             return RhymeConstraint.none()
         opposite = "仄" if expected == "平" else "平"
@@ -462,16 +468,18 @@ class RelationalConstraintSession(BaseConstraintSession):
                     if intersection:
                         self._locked_rhyme_parts = intersection
         elif state.line_index == 0 and not self._line0_rhymes:
-            tones = self._lexicon.get_pingze(last_char)
-            if len(tones) == 1 and "平" in self._rhyme_type and tones[0] == "平":
+            tones = tuple(dict.fromkeys(self._lexicon.get_pingze(last_char)))
+            expected = "平" if "平" in self._rhyme_type else "仄"
+            line0_rhymes = (
+                bool(tones) and all(tone == expected for tone in tones)
+                if self._strict_polyphonic
+                else expected in tones
+            )
+            if line0_rhymes:
                 self._line0_rhymes = True
-                parts = self._lexicon.get_rhyme_part_by_tone(last_char, "平")
+                parts = self._lexicon.get_rhyme_part_by_tone(last_char, expected)
                 if parts:
                     self._locked_rhyme_parts = set(parts)
-            elif len(tones) == 1 and tones[0] == "仄":
-                parts = self._lexicon.get_rhyme_part(last_char)
-                if parts:
-                    self._excluded_rhyme_parts = set(parts)
 
     def _infer_base_tone(self, line_text: str) -> int:
         if len(line_text) >= 2:
@@ -500,11 +508,7 @@ class RelationalConstraintSession(BaseConstraintSession):
                 if self._locked_rhyme_parts is not None
                 else None
             ),
-            excluded_rhyme_parts=(
-                frozenset(self._excluded_rhyme_parts)
-                if self._excluded_rhyme_parts is not None
-                else None
-            ),
+            excluded_rhyme_parts=None,
             rhyme_type=self._rhyme_type,
             base_tone=self._current_base_tone,
             global_base_tone=self._global_base_tone,

@@ -8,6 +8,7 @@ from .candidates import (
     decode_position_candidate,
     has_viable_tang_completion,
     iter_tone_combinations,
+    tang_line_requires_cross_rescue,
     would_force_three_same_ending,
 )
 from .constraints import HanpaiConstraintContext, RelationalConstraintContext
@@ -206,6 +207,7 @@ class TangVerifierPolicy:
 
         line_tone = self._resolve_line_tone(info.base_tone, simulated, state.current_line_text)
         end_tone = self._end_tone(info)
+        rhyme_tone = 0 if "平" in info.rhyme_type else 1
         if not has_viable_tang_completion(
             simulated,
             target_length,
@@ -214,23 +216,12 @@ class TangVerifierPolicy:
             self._lexicon,
             allow_aojiu=self._allow_aojiu,
             strict_polyphonic=self._strict_polyphonic,
-        ):
-            return None
-        if not self._check_even_positions(simulated, line_tone, target_length):
-            return None
-        if not self._check_prevent_isolated_level(
-            simulated, target_length, end_tone, line_tone
-        ):
-            return None
-        if not self._check_prevent_three_same(
-            simulated, target_length, end_tone, line_tone
+            is_first_line=info.current_line == 0,
+            rhyme_tone=rhyme_tone,
+            require_cross_rescue=self._requires_cross_rescue(state, info),
         ):
             return None
         if len(simulated) == target_length:
-            if not self._check_isolated_level(simulated, line_tone):
-                return None
-            if not self._check_end_tone(simulated[-1], end_tone):
-                return None
             if self._enforce_style and not self._check_end_character(
                 simulated[-1], state, target_length
             ):
@@ -270,6 +261,7 @@ class TangVerifierPolicy:
             return None
         line_tone = self._resolve_line_tone(info.base_tone, simulated, state.current_line_text)
         end_tone = self._end_tone(info)
+        rhyme_tone = 0 if "平" in info.rhyme_type else 1
         if not has_viable_tang_completion(
             simulated,
             info.target_length,
@@ -278,26 +270,14 @@ class TangVerifierPolicy:
             self._lexicon,
             allow_aojiu=self._allow_aojiu,
             strict_polyphonic=self._strict_polyphonic,
-        ):
-            return None
-        if not self._check_even_positions(simulated, line_tone, info.target_length):
-            return None
-        if not self._check_prevent_isolated_level(
-            simulated, info.target_length, end_tone, line_tone
-        ):
-            return None
-        if not self._check_prevent_three_same(
-            simulated, info.target_length, end_tone, line_tone
+            is_first_line=info.current_line == 0,
+            rhyme_tone=rhyme_tone,
+            require_cross_rescue=self._requires_cross_rescue(state, info),
         ):
             return None
         if len(simulated) == info.target_length:
-            if not self._check_end_tone(simulated[-1], end_tone):
+            if not self._check_rhyme(simulated[-1], info):
                 return None
-            if info.is_rhyming and info.locked_rhyme_parts:
-                expected = "平" if "平" in info.rhyme_type else "仄"
-                parts = set(self._lexicon.get_rhyme_part_by_tone(simulated[-1], expected))
-                if parts and not info.locked_rhyme_parts.intersection(parts):
-                    return None
         return 0.0
 
     def _resolve_line_tone(self, line_tone: int, simulated: str, previous: str) -> int:
@@ -315,136 +295,36 @@ class TangVerifierPolicy:
             return 2
         return 1 if "平" in info.rhyme_type else 0
 
-    def _check_even_positions(self, line: str, line_tone: int, target_length: int) -> bool:
-        checks = ((1, line_tone), (3, 1 - line_tone if line_tone != 2 else 2), (5, line_tone))
-        for position, expected_value in checks:
-            if position >= len(line) or expected_value == 2:
-                continue
-            tones = self._lexicon.get_pingze(line[position])
-            if len(tones) == 1:
-                expected = "平" if expected_value == 0 else "仄"
-                if tones[0] != expected:
-                    if self._is_aojiu_position(line, line_tone, position, target_length):
-                        continue
-                    return False
-        return True
-
-    def _is_aojiu_position(
+    def _requires_cross_rescue(
         self,
-        line: str,
-        line_tone: int,
-        position: int,
-        target_length: int,
+        state: GenerationState,
+        info: RelationalConstraintContext,
     ) -> bool:
-        if not self._allow_aojiu:
+        if not self._allow_aojiu or info.current_line == 0 or info.current_line % 2 == 0:
             return False
-        if line_tone == 0 and position == 3 and target_length >= 5:
-            rescue_positions = (0, 2)
-        elif line_tone == 1 and position == 5 and target_length >= 7:
-            rescue_positions = (2, 4)
-        else:
-            return False
-        if any(index >= len(line) for index in rescue_positions):
-            return False
-        if not all(
-            len(self._lexicon.get_pingze(line[index])) == 1
-            and self._lexicon.get_pingze(line[index])[0] == "仄"
-            for index in rescue_positions
-        ):
-            return False
-        if len(line) < target_length:
-            return True
-        last_tones = self._lexicon.get_pingze(line[-1])
-        return len(last_tones) == 1 and last_tones[0] == "平"
-
-    def _check_prevent_three_same(
-        self,
-        line: str,
-        target: int,
-        end_tone: int,
-        line_tone: int,
-    ) -> bool:
-        if end_tone == 2:
-            return True
-        expected = "平" if end_tone == 0 else "仄"
-        if (
-            self._strict_polyphonic
-            and len(line) == target - 2
-            and line_tone != 2
-        ):
-            penultimate_tone = line_tone if target == 7 else 1 - line_tone
-            if penultimate_tone == end_tone:
-                tones = self._lexicon.get_pingze(line[-1])
-                if expected in tones:
-                    return False
-        return not would_force_three_same_ending(
-            line,
+        target = info.target_length
+        start = (info.current_line - 1) * target
+        previous = state.all_text[start : start + target]
+        previous_index = info.current_line - 1
+        previous_tone = self._line_tone_at(info.global_base_tone, previous_index)
+        rhyme_tone = 0 if "平" in info.rhyme_type else 1
+        return tang_line_requires_cross_rescue(
+            previous,
             target,
-            (expected,),
+            previous_tone,
+            rhyme_tone,
             self._lexicon,
-            reject_ambiguous=self._strict_polyphonic,
+            is_first_line=previous_index == 0,
+            strict_polyphonic=self._strict_polyphonic,
         )
 
-    def _check_prevent_isolated_level(
-        self,
-        line: str,
-        target: int,
-        end_tone: int,
-        line_tone: int,
-    ) -> bool:
-        if end_tone != 0 or line_tone == 2:
-            return True
-        if line_tone == 0:
-            left_index, right_index, rescue_index = 0, 2, 3
-        elif target == 7:
-            left_index, right_index, rescue_index = 2, 4, 5
-        else:
-            return True
-
-        required_length = rescue_index + 1 if self._allow_aojiu else right_index + 1
-        if len(line) < required_length:
-            return True
-        left = self._lexicon.get_pingze(line[left_index])
-        right = self._lexicon.get_pingze(line[right_index])
-        isolated = len(left) == len(right) == 1 and left[0] == right[0] == "仄"
-        if not isolated:
-            return True
-        if not self._allow_aojiu:
-            return False
-        rescue = self._lexicon.get_pingze(line[rescue_index])
-        return len(rescue) == 1 and rescue[0] == "平"
-
-    def _check_isolated_level(self, line: str, line_tone: int) -> bool:
-        if len(line) < 3:
-            return True
-        last_tones = self._lexicon.get_pingze(line[-1])
-        if len(last_tones) != 1 or last_tones[0] != "平":
-            return True
-        if line_tone == 0:
-            left = self._lexicon.get_pingze(line[0])
-            right = self._lexicon.get_pingze(line[2])
-            isolated = len(left) == len(right) == 1 and left[0] == right[0] == "仄"
-            if isolated and self._allow_aojiu and len(line) >= 4:
-                rescue = self._lexicon.get_pingze(line[3])
-                if len(rescue) == 1 and rescue[0] == "平":
-                    return True
-            return not isolated
-        if line_tone == 1 and len(line) >= 5:
-            left = self._lexicon.get_pingze(line[2])
-            right = self._lexicon.get_pingze(line[4])
-            isolated = len(left) == len(right) == 1 and left[0] == right[0] == "仄"
-            if isolated and self._allow_aojiu and len(line) >= 6:
-                rescue = self._lexicon.get_pingze(line[5])
-                if len(rescue) == 1 and rescue[0] == "平":
-                    return True
-            return not isolated
-        return True
-
-    def _check_end_tone(self, char: str, end_tone: int) -> bool:
-        tones = self._lexicon.get_pingze(char)
-        if len(tones) != 1 or end_tone == 2:
-            return True
-        return tones[0] == ("平" if end_tone == 0 else "仄")
+    @staticmethod
+    def _line_tone_at(global_tone: int, line_index: int) -> int:
+        if global_tone == 2:
+            return 2
+        if line_index % 4 in (1, 2):
+            return 1 - global_tone
+        return global_tone
 
     @staticmethod
     def _check_end_character(char: str, state: GenerationState, target_length: int) -> bool:
@@ -457,21 +337,25 @@ class TangVerifierPolicy:
         return True
 
     def _check_rhyme(self, char: str, info: RelationalConstraintContext) -> bool:
-        if not info.is_rhyming:
-            return True
         expected = "平" if "平" in info.rhyme_type else "仄"
+        is_rhyming = info.is_rhyming
+        if info.current_line == 0:
+            tones = tuple(dict.fromkeys(self._lexicon.get_pingze(char)))
+            is_rhyming = (
+                bool(tones) and all(tone == expected for tone in tones)
+                if self._strict_polyphonic
+                else expected in tones
+            )
+        if not is_rhyming:
+            return True
         parts = set(self._lexicon.get_rhyme_part_by_tone(char, expected))
-        if info.locked_rhyme_parts and parts:
+        if not parts or (self._strict_polyphonic and len(parts) != 1):
+            return False
+        if info.locked_rhyme_parts:
             if self._strict_polyphonic:
                 if not parts.issubset(info.locked_rhyme_parts):
                     return False
             elif not info.locked_rhyme_parts.intersection(parts):
-                return False
-        if info.excluded_rhyme_parts and parts:
-            if self._strict_polyphonic:
-                if info.excluded_rhyme_parts.intersection(parts):
-                    return False
-            elif parts.issubset(info.excluded_rhyme_parts):
                 return False
         return True
 
