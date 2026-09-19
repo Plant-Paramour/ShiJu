@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import product
-from typing import Protocol, Sequence
+from typing import Mapping, Protocol, Sequence
 
 from .data import MeterTemplate, RhymeLookup
 from .domain import (
@@ -64,6 +64,30 @@ class BaseConstraintSession:
 
     def candidate_context(self, state: GenerationState):
         return None
+
+    def prime_fixed_lines(
+        self,
+        fixed_lines: Mapping[int, str],
+        *,
+        strict_polyphonic: bool = True,
+    ) -> None:
+        """Preload constraints derived from immutable rewrite context."""
+        return None
+
+
+class ContextConstraintError(ValueError):
+    code = "CONTEXT_CONSTRAINT_CONFLICT"
+
+
+def _tone_matches(
+    tones: Sequence[str],
+    allowed: set[str] | frozenset[str],
+    strict: bool,
+) -> bool:
+    choices = set(tones)
+    if not choices:
+        return False
+    return choices.issubset(allowed) if strict else bool(choices.intersection(allowed))
 
 
 class TemplateConstraintProfile:
@@ -130,6 +154,53 @@ class TemplateConstraintSession(BaseConstraintSession):
         parts = self._lexicon.get_rhyme_part_by_tone(text[-1], expected_tone)
         if parts:
             self._locked_rhyme_parts[group] = parts[0]
+
+    def prime_fixed_lines(
+        self,
+        fixed_lines: Mapping[int, str],
+        *,
+        strict_polyphonic: bool = True,
+    ) -> None:
+        group_parts: dict[int, set[str]] = {}
+        for index, text in fixed_lines.items():
+            line = self._lines[index]
+            if len(text) != line.layout.length:
+                raise ContextConstraintError(
+                    f"第 {index + 1} 句应为 {line.layout.length} 字，实际为 {len(text)} 字"
+                )
+            for position, char in enumerate(text):
+                if not _tone_matches(
+                    self._lexicon.get_pingze(char),
+                    line.tone_options[position],
+                    strict_polyphonic,
+                ):
+                    raise ContextConstraintError(
+                        f"第 {index + 1} 句第 {position + 1} 字与词牌格律冲突"
+                    )
+            if line.rhyme_group is None:
+                continue
+            allowed_tones = set(line.tone_options[-1])
+            if line.rhyme_group == 1:
+                allowed_tones = {
+                    "平" if "平" in self._template.rhyme_type else "仄"
+                }
+            parts = {
+                part
+                for tone in allowed_tones
+                for part in self._lexicon.get_rhyme_part_by_tone(text[-1], tone)
+            }
+            if not parts:
+                raise ContextConstraintError(f"第 {index + 1} 句韵脚无法确定韵部")
+            previous = group_parts.get(line.rhyme_group)
+            narrowed = parts if previous is None else previous.intersection(parts)
+            if not narrowed:
+                raise ContextConstraintError(
+                    f"第 {index + 1} 句与同组固定韵脚不属于同一韵部"
+                )
+            group_parts[line.rhyme_group] = narrowed
+        self._locked_rhyme_parts.update(
+            {group: sorted(parts)[0] for group, parts in group_parts.items()}
+        )
 
 
 @dataclass(frozen=True)
@@ -297,6 +368,40 @@ class HanpaiConstraintSession(BaseConstraintSession):
             forbid_three_same_ending=self._forbid_three_same_ending,
             allowed_end_tones=allowed_end_tones,
         )
+
+    def prime_fixed_lines(
+        self,
+        fixed_lines: Mapping[int, str],
+        *,
+        strict_polyphonic: bool = True,
+    ) -> None:
+        locked: dict[str, set[str]] | None = None
+        for index, text in fixed_lines.items():
+            if len(text) != self._line_lengths[index]:
+                raise ContextConstraintError(
+                    f"第 {index + 1} 行应为 {self._line_lengths[index]} 字，实际为 {len(text)} 字"
+                )
+            if index not in self._rhyme_lines:
+                continue
+            found = {
+                tone: set(self._lexicon.get_rhyme_part_by_tone(text[-1], tone))
+                for tone in self._lexicon.get_pingze(text[-1])
+            }
+            found = {tone: parts for tone, parts in found.items() if parts}
+            if not found:
+                raise ContextConstraintError(f"第 {index + 1} 行韵脚无法确定韵部")
+            if locked is None:
+                locked = found
+                continue
+            locked = {
+                tone: locked[tone].intersection(parts)
+                for tone, parts in found.items()
+                if tone in locked and locked[tone].intersection(parts)
+            }
+            if not locked:
+                raise ContextConstraintError("固定汉俳韵脚不存在共同韵部")
+        if locked is not None:
+            self._locked_rhyme_parts = locked
 
 
 @dataclass(frozen=True)
@@ -514,3 +619,81 @@ class RelationalConstraintSession(BaseConstraintSession):
             global_base_tone=self._global_base_tone,
             line0_rhymes=self._line0_rhymes,
         )
+
+    def prime_fixed_lines(
+        self,
+        fixed_lines: Mapping[int, str],
+        *,
+        strict_polyphonic: bool = True,
+    ) -> None:
+        for index, text in fixed_lines.items():
+            if len(text) != self._line_length:
+                raise ContextConstraintError(
+                    f"第 {index + 1} 句应为 {self._line_length} 字，实际为 {len(text)} 字"
+                )
+
+        possible_bases = []
+        for global_base in (0, 1):
+            valid = True
+            for index, text in fixed_lines.items():
+                base = 1 - global_base if index % 4 in (1, 2) else global_base
+                expected_by_position = {
+                    1: "平" if base == 0 else "仄",
+                    3: "仄" if base == 0 else "平",
+                }
+                if self._line_length == 7 and not (
+                    self._allow_aojiu
+                    and "平" in self._rhyme_type
+                    and index != 0
+                    and (index + 1) % 2 != 0
+                ):
+                    expected_by_position[5] = "平" if base == 0 else "仄"
+                for position, expected in expected_by_position.items():
+                    if not _tone_matches(
+                        self._lexicon.get_pingze(text[position]),
+                        {expected},
+                        strict_polyphonic,
+                    ):
+                        valid = False
+                        break
+                if not valid:
+                    break
+            if valid:
+                possible_bases.append(global_base)
+        if not possible_bases:
+            raise ContextConstraintError("固定诗句无法共同确定合法的替、对、粘格式")
+        if len(possible_bases) == 1:
+            self._global_base_tone = possible_bases[0]
+            self._current_base_tone = possible_bases[0]
+
+        expected_rhyme_tone = "平" if "平" in self._rhyme_type else "仄"
+        opposite = "仄" if expected_rhyme_tone == "平" else "平"
+        rhyme_parts: set[str] | None = None
+        for index, text in fixed_lines.items():
+            end_tones = self._lexicon.get_pingze(text[-1])
+            is_rhyming = index > 0 and (index + 1) % 2 == 0
+            if index == 0:
+                self._line0_rhymes = _tone_matches(
+                    end_tones, {expected_rhyme_tone}, strict_polyphonic
+                )
+                is_rhyming = self._line0_rhymes
+            elif not is_rhyming and not _tone_matches(
+                end_tones, {opposite}, strict_polyphonic
+            ):
+                raise ContextConstraintError(f"第 {index + 1} 句句尾声调与诗式冲突")
+            if not is_rhyming:
+                continue
+            if not _tone_matches(end_tones, {expected_rhyme_tone}, strict_polyphonic):
+                raise ContextConstraintError(f"第 {index + 1} 句韵脚声调与诗式冲突")
+            parts = set(
+                self._lexicon.get_rhyme_part_by_tone(text[-1], expected_rhyme_tone)
+            )
+            if strict_polyphonic and len(parts) != 1:
+                raise ContextConstraintError(f"第 {index + 1} 句韵脚存在歧义")
+            if not parts:
+                raise ContextConstraintError(f"第 {index + 1} 句韵脚无法确定韵部")
+            rhyme_parts = parts if rhyme_parts is None else rhyme_parts.intersection(parts)
+            if not rhyme_parts:
+                raise ContextConstraintError("固定偶数句不存在共同韵部")
+        if rhyme_parts is not None:
+            self._locked_rhyme_parts = rhyme_parts

@@ -6,6 +6,8 @@ from typing import FrozenSet, Optional, Tuple
 
 
 CONTENT_MARKER = "[content]"
+PLAN_MARKER = "[plan]"
+REWRITE_MARKER = "[rewrite]"
 TITLE_MARKER = "[title]"
 
 

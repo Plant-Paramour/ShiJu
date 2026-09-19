@@ -134,7 +134,10 @@ class ConstrainedLogitsProcessor(LogitsProcessor):
         separator_policy: SeparatorPolicy,
         policy_tiers: Sequence[PolicyTier],
         config: ProcessorConfig,
+        activation_marker: str = CONTENT_MARKER,
     ):
+        if not activation_marker:
+            raise ValueError("约束启动标记不能为空")
         self._vocab = vocab
         self._controller = controller
         self._tokenizer = tokenizer
@@ -142,6 +145,7 @@ class ConstrainedLogitsProcessor(LogitsProcessor):
         self._separator_policy = separator_policy
         self._policy_tiers = tuple(policy_tiers)
         self._config = config
+        self._activation_marker = activation_marker
         self._last_decoded_text = ""
         self._has_started_content = False
         self._eos_token_id = tokenizer.eos_token_id
@@ -163,7 +167,7 @@ class ConstrainedLogitsProcessor(LogitsProcessor):
         generated_ids = input_ids[0][self._input_prompt_len :].tolist()
         raw_text = self._tokenizer.decode(generated_ids, skip_special_tokens=True)
         raw_text = raw_text.replace(" ", "").replace("\r", "")
-        if not self._track_content(raw_text):
+        if not self._track_constrained_content(raw_text):
             return scores
 
         if self._constraints_released:
@@ -252,16 +256,24 @@ class ConstrainedLogitsProcessor(LogitsProcessor):
             and 0 < len(self._vocab.text_for_token(token_id)) <= max_characters
         }
 
-    def _track_content(self, raw_text: str) -> bool:
+    @property
+    def constraints_started(self) -> bool:
+        return self._has_started_content
+
+    def _track_constrained_content(self, raw_text: str) -> bool:
         if not self._has_started_content:
-            if CONTENT_MARKER not in raw_text:
+            if self._activation_marker not in raw_text:
                 return False
             self._has_started_content = True
-            content = raw_text.split(CONTENT_MARKER, 1)[1]
+            content = raw_text.split(self._activation_marker, 1)[1]
             self._controller.advance(content)
             self._last_decoded_text = content
             return True
-        content = raw_text.split(CONTENT_MARKER, 1)[1] if CONTENT_MARKER in raw_text else raw_text
+        content = (
+            raw_text.split(self._activation_marker, 1)[1]
+            if self._activation_marker in raw_text
+            else raw_text
+        )
         if len(content) > len(self._last_decoded_text):
             latest = content[len(self._last_decoded_text) :]
             self._controller.advance(latest)

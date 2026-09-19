@@ -520,7 +520,7 @@ def build_hanpai_prompt(
     return _apply_thinking(messages, use_thinking)
 
 
-def build_hanpai_prompt(
+def _obsolete_build_hanpai_prompt(
     task_type: str,
     form_name: str,
     theme: str,

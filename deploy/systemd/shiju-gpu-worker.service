@@ -1,0 +1,18 @@
+[Unit]
+Description=ShiJu T4 GPU worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shiju
+Group=shiju
+WorkingDirectory=/opt/shiju
+EnvironmentFile=/etc/shiju/gpu-worker.env
+ExecStart=/opt/shiju/.venv/bin/shiju-gpu-worker
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target

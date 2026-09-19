@@ -204,3 +204,17 @@ pytest
 ```
 
 同时在浏览器复验唐诗、宋词、俳句、排律切换，宋词模板中的 `中`，错误字/多音字样式，以及窄屏无页面级横向溢出。
+
+## 9. 服务化边界
+
+双服务器部署的完整约定见 `docs/DISTRIBUTED_ARCHITECTURE.md`。新增代码必须遵守：
+
+- `apps/api` 不得导入 `torch`、`transformers`、`shiju.app` 或 `shiju.generation`；
+- GPU 模型只能由 `ModelRunner` 持有，单次任务不得重复加载模型；
+- HTTP 层只负责校验、鉴权和任务状态，不直接创建格律 session；
+- Worker 任务之间不得共享 controller、processor 或 rewrite session；
+- 重写固定内容由程序拼接，禁止依赖模型复述原文；
+- 数据库变更必须新增 `apps/api/migrations/NNN_name.sql`，不得在线修改旧 migration。
+
+本地运行控制面需要 `pip install -e ".[api]"`；GPU Worker 需要按 CUDA 环境安装
+PyTorch 后执行 `pip install -e ".[gpu]"`。

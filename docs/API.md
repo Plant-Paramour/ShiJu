@@ -426,3 +426,42 @@ evaluate(token_id, context) -> float | None
 | 拗救 | 开、关 | 映射为 `allowAoJiu`。默认关闭；宋词模式禁用。 |
 
 无论采用哪种多音字模式，多音字仍以黑体标注。自动模式会展示系统采用的上下文读法，未能由规则唯一确定的字仍保留“平/仄”供人工复核。严格模式的量词语义与生成接口 `TaskRequest.strict_polyphonic=True` 一致。
+
+## 9. 异步诗词工具 API
+
+安装 `.[api]` 后运行 `shiju-api`。公开接口使用 `SHIJU_AGENT_TOKEN`，Worker 接口使用
+独立的 `SHIJU_WORKER_TOKEN`。请求和响应示例、部署拓扑见
+`docs/DISTRIBUTED_ARCHITECTURE.md`。
+
+### 9.1 提交整首生成
+
+`POST /v1/poetry/jobs/generate` 接收 `meter_type`、`form_name`、`theme`、
+`rhyme_dict_name`、`requirement`、`num_lines`、`strict_polyphonic`、
+`candidate_count`、`task_options` 和 `sampling`。
+
+模型路径、量化配置和关闭硬约束不属于公开请求参数，由 GPU Worker 环境统一配置。
+
+### 9.2 提交指定句重写
+
+`POST /v1/poetry/jobs/rewrite` 额外接收完整 `original_text` 和从 1 开始的
+`target_line_numbers`。每次允许一至四句，句号必须升序且不得重复。成功结果包含：
+
+| 字段 | 含义 |
+| --- | --- |
+| `revision_note` | 模型在 `[plan]` 阶段输出的一句修改思路 |
+| `replacements` | 句号到替换文本的映射 |
+| `full_text` | 程序完成精确替换后的全文 |
+| `display_text` | 应直接展示给用户的“修改思路 + 全文” |
+| `validation` | 结构、平仄和押韵验证结果 |
+| `candidates` | 本次任务的所有合格候选 |
+
+### 9.3 查询任务
+
+`GET /v1/poetry/jobs/{job_id}` 返回任务状态、尝试次数、结果或结构化错误。提交接口支持
+`Idempotency-Key`，并统一返回 HTTP `202` 和 `job_id`。
+
+### 9.4 重写输出协议
+
+重写 processor 的启动标记是可配置项。整首生成默认使用 `[content]`，指定句重写使用
+`[rewrite]`。`[plan]` 及其内容不进入状态机。缺少或错误的协议标记最多自动重试一次，
+随后返回 `MODEL_PROTOCOL_ERROR`。

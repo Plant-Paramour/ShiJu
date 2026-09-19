@@ -130,10 +130,14 @@ class TaskRuntime:
         vocab: VocabLookup,
         tokenizer: TokenizerLike,
         input_prompt_len: int,
+        *,
+        controller: GenerationController | None = None,
+        activation_marker: str = CONTENT_MARKER,
     ) -> ConstrainedLogitsProcessor:
-        session = self.profile.create_session()
-        state_machine = GenerationStateMachine(self.profile.layout)
-        controller = GenerationController(state_machine, session)
+        if controller is None:
+            session = self.profile.create_session()
+            state_machine = GenerationStateMachine(self.profile.layout)
+            controller = GenerationController(state_machine, session)
         return ConstrainedLogitsProcessor(
             vocab=vocab,
             controller=controller,
@@ -142,6 +146,7 @@ class TaskRuntime:
             separator_policy=self.separator_policy,
             policy_tiers=self.policy_tiers,
             config=self.processor_config,
+            activation_marker=activation_marker,
         )
 
     def process_output(self, text: str) -> str:

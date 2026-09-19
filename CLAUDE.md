@@ -151,6 +151,7 @@ TaskRequest(
 ## 工程化边界
 
 - 当前公开运行入口是 `shiju.app.run(AppConfig)`，不是 HTTP API；服务化时应在外层增加请求校验和结果存储。
+- 服务化入口现位于 `apps/api` 和 `apps/gpu_worker`；部署和工具协议以 `docs/DISTRIBUTED_ARCHITECTURE.md` 为准。控制面不得导入 GPU 依赖。
 - 格律检查器公开的是 `web/prosody-checker/core.js` 的纯函数接口，不提供 HTTP JSON API；当前数据规模下优先静态部署，不在 2 核 2G 服务器上增加无必要的应用进程。
 - 格律检查器默认采用多音字放行、拗救关闭；页面可切换严格多音字模式和拗救。宋词只应用多音字模式，不应用拗救。
 - 一次生成必须独占自己的 `GenerationStateMachine`、constraint session 和 logits processor，禁止跨请求共享。
