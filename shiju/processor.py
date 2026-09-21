@@ -185,6 +185,15 @@ class ConstrainedLogitsProcessor(LogitsProcessor):
                 return self._completion_mask(scores)
             return self._only_tokens(scores, {self._eos_token_id})
 
+        forced_prefix = getattr(self._controller, "forced_prefix", lambda: None)()
+        if forced_prefix:
+            allowed = self._forced_token_ids(forced_prefix, scores.shape[1])
+            if not allowed:
+                raise RuntimeError(
+                    f"分词器无法注入固定文本前缀: {forced_prefix[:12]}"
+                )
+            return self._only_tokens(scores, allowed)
+
         if state.step is not StepKind.TEXT:
             allowed = self._separator_policy.allowed_tokens(
                 state,
@@ -285,6 +294,29 @@ class ConstrainedLogitsProcessor(LogitsProcessor):
             scores,
             self._separator_policy.newline_tokens | {self._eos_token_id},
         )
+
+    def _forced_token_ids(self, prefix: str, vocab_size: int) -> set[int]:
+        """Find tokens whose decoded text is an exact non-empty prefix."""
+        allowed: set[int] = set()
+        for end in range(1, len(prefix) + 1):
+            ids = self._tokenizer.encode(prefix[:end], add_special_tokens=False)
+            if len(ids) != 1:
+                continue
+            token_id = int(ids[0])
+            decoded = self._tokenizer.decode([token_id], skip_special_tokens=True)
+            decoded = decoded.replace(" ", "").replace("\r", "")
+            if 0 <= token_id < vocab_size and decoded and prefix.startswith(decoded):
+                allowed.add(token_id)
+        if allowed:
+            return allowed
+        ids = self._tokenizer.encode(prefix, add_special_tokens=False)
+        if ids:
+            token_id = int(ids[0])
+            decoded = self._tokenizer.decode([token_id], skip_special_tokens=True)
+            decoded = decoded.replace(" ", "").replace("\r", "")
+            if 0 <= token_id < vocab_size and decoded and prefix.startswith(decoded):
+                allowed.add(token_id)
+        return allowed
 
     @staticmethod
     def _only_tokens(scores: torch.FloatTensor, token_ids: set[int]) -> torch.FloatTensor:

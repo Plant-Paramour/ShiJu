@@ -6,12 +6,14 @@ from collections.abc import Sequence
 os.environ.setdefault("CUDA_LAUNCH_BLOCKING", "1")
 
 import torch
+from threading import Thread
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     BitsAndBytesConfig,
     LogitsProcessorList,
     StoppingCriteriaList,
+    TextIteratorStreamer,
 )
 
 from ..contracts import SamplingOptions
@@ -127,3 +129,26 @@ class ModelRunner:
             skip_special_tokens=True,
         )
 
+    def generate_streaming(self, prompt: str, sampling: SamplingOptions, *, logits_processors=None, stopping_criteria=None, on_text=None) -> str:
+        """在线程中生成并通过 Transformers streamer 提供增量文本。"""
+        tokenizer = self.tokenizer; model = self.model
+        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+        kwargs = dict(inputs, streamer=streamer, max_new_tokens=sampling.max_new_tokens,
+                      logits_processor=LogitsProcessorList(list(logits_processors)) if logits_processors else None,
+                      stopping_criteria=StoppingCriteriaList(list(stopping_criteria)) if stopping_criteria else None,
+                      pad_token_id=tokenizer.eos_token_id, do_sample=True, temperature=sampling.temperature,
+                      top_p=sampling.top_p, top_k=sampling.top_k, min_p=sampling.min_p)
+        errors = []
+        def run():
+            try: model.generate(**kwargs)
+            except Exception as exc: errors.append(exc)
+        thread = Thread(target=run, daemon=True); thread.start()
+        chunks = []
+        for piece in streamer:
+            chunks.append(piece)
+            if on_text: on_text(piece)
+        thread.join()
+        if errors: raise errors[0]
+        if torch.cuda.is_available(): torch.cuda.synchronize()
+        return "".join(chunks)

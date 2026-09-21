@@ -11,6 +11,7 @@ from ..schemas import (
     WorkerCompleteModel,
     WorkerFailModel,
     WorkerIdentityModel,
+    WorkerCandidateModel,
 )
 
 
@@ -95,3 +96,11 @@ def fail(
     except JobOwnershipError as exc:
         raise HTTPException(status_code=409, detail="job ownership lost") from exc
 
+
+@router.post("/jobs/{job_id}/candidates", status_code=status.HTTP_204_NO_CONTENT)
+def candidate_update(job_id: str, body: WorkerCandidateModel, request: Request, authorization: str | None = Header(default=None)):
+    _authorize(request, authorization)
+    try:
+        request.app.state.jobs.update_candidate(job_id, body.ordinal, **body.model_dump(exclude={"worker_id", "ordinal"}, exclude_none=True))
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

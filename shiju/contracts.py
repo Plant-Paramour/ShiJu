@@ -59,7 +59,7 @@ class GeneratePoemRequest:
     cipai_data_path: str = "PoeTone-main/data/cipai_data.json"
     num_lines: int | None = None
     strict_polyphonic: bool = True
-    candidate_count: int = 3
+    candidate_count: int = 1
     task_options: dict[str, Any] = field(default_factory=dict)
     sampling: SamplingOptions = field(default_factory=SamplingOptions)
 
@@ -93,7 +93,7 @@ class RewritePoemRequest:
     num_lines: int | None = None
     strict_polyphonic: bool = True
     strict_context: bool = True
-    candidate_count: int = 3
+    candidate_count: int = 1
     task_options: dict[str, Any] = field(default_factory=dict)
     sampling: SamplingOptions = field(
         default_factory=lambda: SamplingOptions(max_new_tokens=512)
@@ -107,8 +107,8 @@ class RewritePoemRequest:
         normalized = tuple(sorted(set(self.target_line_numbers)))
         if normalized != self.target_line_numbers:
             raise ContractError("target_line_numbers 必须升序且不能重复")
-        if not 1 <= len(normalized) <= 4:
-            raise ContractError("首期每次必须指定一至四句")
+        if not 1 <= len(normalized) <= 64:
+            raise ContractError("每次必须指定一至六十四句")
         if any(number <= 0 for number in normalized):
             raise ContractError("target_line_numbers 使用从 1 开始的正整数")
         if not 1 <= self.candidate_count <= 5:

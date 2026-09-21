@@ -9,6 +9,7 @@ description = "Constrained decoding for classical Chinese poetry"
 requires-python = ">=3.10"
 
 [project.optional-dependencies]
+agent = []
 api = [
     "fastapi>=0.115,<1.0",
     "pydantic>=2.7,<3.0",
@@ -33,6 +34,7 @@ dev = [
 ]
 
 [project.scripts]
+shiju-agent = "apps.agent.main:main"
 shiju-api = "apps.api.main:main"
 shiju-gpu-worker = "apps.gpu_worker.main:main"
 

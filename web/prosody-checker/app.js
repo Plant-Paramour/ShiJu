@@ -1,19 +1,14 @@
 import {
-  buildLexicon,
   evaluateHaiku,
-  evaluateBestTangForm,
   evaluatePailv,
   evaluateSongci,
   evaluateTang,
   formatMeterTemplate,
-} from "./core.js?v=6";
-
-const RHYME_BOOKS = {
-  Xinyun: "Xinyun.json",
-  Pinshui: "Pinshui.json",
-  Cilin: "Cilin.json",
-  Tongyun: "Tongyun.json",
-};
+} from "./core.js?v=7";
+import {
+  evaluateBestTangAcrossBooks,
+  getLexicon,
+} from "./prosody-evaluation.js?v=1";
 
 const METER_FILES = [
   "浣溪沙.json",
@@ -57,7 +52,6 @@ const elements = {
   rhymeResults: document.querySelector("#rhyme-results"),
 };
 
-const lexiconCache = new Map();
 const meterCache = new Map();
 
 function assetUrl(folder, filename) {
@@ -68,14 +62,6 @@ async function fetchJson(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error("数据加载失败：" + response.status);
   return response.json();
-}
-
-async function getLexicon(name) {
-  if (!lexiconCache.has(name)) {
-    const promise = fetchJson(assetUrl("Rhyme", RHYME_BOOKS[name])).then(buildLexicon);
-    lexiconCache.set(name, promise);
-  }
-  return lexiconCache.get(name);
 }
 
 async function getMeter(filename) {
@@ -270,25 +256,26 @@ function charCountLabel(charCount) {
 }
 
 function resultMeta(result, type, variant) {
+  const rhymeBookName = elements.rhymeBook.selectedOptions[0]?.text || "未标注韵书";
   const smartMeta = result.stats.autoMatched
     ? " · 智能选式 · 综合 " + result.stats.comprehensiveScore.toFixed(2).replace(/\.00$/, "")
     : "";
   if (type === "songci") {
     return elements.cipai.selectedOptions[0].text + " · " + variant.name
-      + " · " + (variant.rhyme_type || "未标注韵式") + smartMeta;
+      + " · " + (variant.rhyme_type || "未标注韵式") + " · " + rhymeBookName + smartMeta;
   }
   if (type === "tang") {
     const form = elements.tangForm.value === "jueju" ? "绝句" : "律诗";
     return charCountLabel(result.stats.charCount) + "言" + form + " · "
       + (result.stats.globalBase ?? "未定") + "起 · "
-      + result.stats.rhymeTone + "韵" + smartMeta;
+      + result.stats.rhymeTone + "韵 · " + rhymeBookName + smartMeta;
   }
   if (type === "pailv") {
     return charCountLabel(result.stats.charCount) + "言排律 · "
       + (result.stats.globalBase ?? "未定") + "起 · "
-      + result.stats.rhymeTone + "韵" + smartMeta;
+      + result.stats.rhymeTone + "韵 · " + rhymeBookName + smartMeta;
   }
-  return "五七五俳句" + smartMeta;
+  return "五七五俳句 · " + rhymeBookName + smartMeta;
 }
 
 function renderResult(result, type, variant) {
@@ -349,20 +336,21 @@ async function runCheck(event) {
   elements.button.textContent = "检查中";
   try {
     let type = selectedType();
-    const lexicon = await getLexicon(elements.rhymeBook.value);
     const options = evaluationOptions();
     let result;
     let variant = null;
     if ((type === "tang" || type === "pailv") && elements.smartForm.checked) {
-      const best = evaluateBestTangForm(text, lexicon, options, {
+      const best = await evaluateBestTangAcrossBooks(text, options, {
         type,
         charCount: elements.tangLength.value,
         form: elements.tangForm.value,
+        rhymeBookId: elements.rhymeBook.value,
       });
       result = best.result;
       result.stats.comprehensiveScore = best.score;
       result.stats.autoMatched = true;
       type = best.type;
+      elements.rhymeBook.value = best.rhymeBookId;
       elements.typeInputs.find((input) => input.value === type).checked = true;
       if (type === "tang") {
         elements.tangLength.value = String(best.charCount);
@@ -370,17 +358,21 @@ async function runCheck(event) {
       }
       updateTypeView();
     } else if (type === "songci") {
+      const lexicon = await getLexicon(elements.rhymeBook.value);
       variant = await currentVariant();
       result = evaluateSongci(text, variant, lexicon, options);
     } else if (type === "tang") {
+      const lexicon = await getLexicon(elements.rhymeBook.value);
       result = evaluateTang(text, {
         charCount: Number(elements.tangLength.value),
         form: elements.tangForm.value,
         ...options,
       }, lexicon);
     } else if (type === "pailv") {
+      const lexicon = await getLexicon(elements.rhymeBook.value);
       result = evaluatePailv(text, lexicon, options);
     } else {
+      const lexicon = await getLexicon(elements.rhymeBook.value);
       result = evaluateHaiku(text, lexicon, options);
     }
     renderResult(result, type, variant);

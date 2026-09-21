@@ -422,7 +422,7 @@ evaluate(token_id, context) -> float | None
 | 宋词词牌 | `Songci_Meter/*.json` 文件 | 选择词牌模板。 |
 | 宋词变体 | 模板 `variants[].name` | 选择具体逐字格律和韵组。 |
 | 多音字 | `automatic`、`strict`、`permissive` | 映射为 `polyphonicMode`，其中自动模式为页面默认值。 |
-| 智能选式 | 开、关 | 唐诗和排律开启时调用 `evaluateBestTangForm`；宋词和俳句禁用。默认开启。 |
+| 智能选式 | 开、关 | 唐诗和排律开启时比较全部支持诗式及四本韵书，并自动切换到综合分最高的诗式和韵书；宋词和俳句禁用。默认开启。 |
 | 拗救 | 开、关 | 映射为 `allowAoJiu`。默认关闭；宋词模式禁用。 |
 
 无论采用哪种多音字模式，多音字仍以黑体标注。自动模式会展示系统采用的上下文读法，未能由规则唯一确定的字仍保留“平/仄”供人工复核。严格模式的量词语义与生成接口 `TaskRequest.strict_polyphonic=True` 一致。
@@ -439,12 +439,16 @@ evaluate(token_id, context) -> float | None
 `rhyme_dict_name`、`requirement`、`num_lines`、`strict_polyphonic`、
 `candidate_count`、`task_options` 和 `sampling`。
 
+`candidate_count` 支持 `1` 至 `5`，未传时默认生成 `1` 个候选。
+
 模型路径、量化配置和关闭硬约束不属于公开请求参数，由 GPU Worker 环境统一配置。
 
 ### 9.2 提交指定句重写
 
 `POST /v1/poetry/jobs/rewrite` 额外接收完整 `original_text` 和从 1 开始的
-`target_line_numbers`。每次允许一至四句，句号必须升序且不得重复。成功结果包含：
+`target_line_numbers`。每次允许一至六十四句，句号必须升序且不得重复。解码阶段输出完整
+诗稿：目标句正常生成，非目标句按原文逐 token 强制注入模型输出，使固定句真实进入后续
+自回归上下文。成功结果包含：
 
 | 字段 | 含义 |
 | --- | --- |
@@ -460,8 +464,26 @@ evaluate(token_id, context) -> float | None
 `GET /v1/poetry/jobs/{job_id}` 返回任务状态、尝试次数、结果或结构化错误。提交接口支持
 `Idempotency-Key`，并统一返回 HTTP `202` 和 `job_id`。
 
-### 9.4 重写输出协议
+`GET /v1/poetry/jobs/{job_id}/state` 返回逐候选状态、原请求和已持久化的评分。候选一旦成功
+就以 `(job_id, candidate_ordinal)` 幂等归档到个人作品，不等待同批其他候选。
+
+### 9.4 保存候选评分
+
+`PUT /v1/poetry/jobs/{job_id}/candidates/{ordinal}/evaluation` 接收完整 `evaluation` JSON，
+并同时回写任务候选和个人作品。浏览器仅在首次生成完成或历史作品缺少评分时计算一次，后续
+刷新直接复用数据库结果。
+
+### 9.5 重写输出协议
 
 重写 processor 的启动标记是可配置项。整首生成默认使用 `[content]`，指定句重写使用
-`[rewrite]`。`[plan]` 及其内容不进入状态机。缺少或错误的协议标记最多自动重试一次，
+`[rewrite]`。`[plan]` 及其内容不进入状态机。缺少或错误的协议标记最多自动重试两次，
 随后返回 `MODEL_PROTOCOL_ERROR`。
+
+## 10. 轻量 Agent
+
+`apps.agent.framework.AgentSession` 实现 OpenAI-compatible Chat Completions 工具循环，
+`apps.agent.tools.AgentToolbox` 提供韵书、词牌、生成、重写和任务状态工具。整首生成与
+指定句重写先调用 `prepare_*` 形成透明方案；Web 页面公开提示词与完整配置，用户修改后由
+`POST /v1/agent/proposals/{proposal_id}/submit` 直接提交本地模型，不再把修改内容发回
+Agent。仅后续纯文本明确确认时，Agent 才能调用 `submit_*`。本地配置、工具清单和运行
+方式见 `docs/AGENT.md`。

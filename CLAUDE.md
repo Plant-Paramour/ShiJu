@@ -18,6 +18,8 @@
 
 - `docs/API.md`：面向调用者的 Python 接口、配置参数、支持矩阵、底层协议和错误说明。
 - `docs/DEVELOPMENT.md`：面向开发者的模块边界、生成生命周期、约束顺序、扩展方法、数据格式和测试门槛。
+- `docs/AGENT.md`：轻量 Agent 的工具、确认门禁、OpenAI-compatible 配置和本地运行方式。
+- `docs/DISTRIBUTED_ARCHITECTURE.md`：常驻控制面和按需 GPU Worker 的部署边界。
 - `web/prosody-checker/README.md`：独立格律检查前端的运行、评分规则、数据依赖和部署说明。
 
 修改公共配置、任务工厂、约束协议或数据格式时，必须同步更新以上文档。`CLAUDE.md` 只保留项目级快速上下文，详细参数以 `docs/API.md` 为准。
@@ -37,6 +39,10 @@ shiju/
   processor.py          # 通用 LogitsProcessor
   prompts.py            # Prompt 构建
   tasks.py              # 任务工厂与配置
+apps/
+  agent/                # OpenAI-compatible 工具调用与确认工作流
+  api/                  # 常驻异步任务控制面
+  gpu_worker/           # GPU 主动领取与执行进程
 Rhyme/*.json            # 韵书
 Songci_Meter/*.json     # 宋词格律模板
 tests/                  # 不依赖真实模型的单元与回归测试
@@ -150,8 +156,8 @@ TaskRequest(
 
 ## 工程化边界
 
-- 当前公开运行入口是 `shiju.app.run(AppConfig)`，不是 HTTP API；服务化时应在外层增加请求校验和结果存储。
-- 服务化入口现位于 `apps/api` 和 `apps/gpu_worker`；部署和工具协议以 `docs/DISTRIBUTED_ARCHITECTURE.md` 为准。控制面不得导入 GPU 依赖。
+- 本地生成兼容入口是 `shiju.app.run(AppConfig)`；异步 HTTP 工具入口位于 `apps/api`。
+- 服务化入口现位于 `apps/agent`、`apps/api` 和 `apps/gpu_worker`；部署和工具协议以 `docs/DISTRIBUTED_ARCHITECTURE.md` 为准。Agent 与控制面不得导入 GPU 依赖。
 - 格律检查器公开的是 `web/prosody-checker/core.js` 的纯函数接口，不提供 HTTP JSON API；当前数据规模下优先静态部署，不在 2 核 2G 服务器上增加无必要的应用进程。
 - 格律检查器默认采用多音字放行、拗救关闭；页面可切换严格多音字模式和拗救。宋词只应用多音字模式，不应用拗救。
 - 一次生成必须独占自己的 `GenerationStateMachine`、constraint session 和 logits processor，禁止跨请求共享。

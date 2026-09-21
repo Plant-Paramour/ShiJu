@@ -15,12 +15,17 @@ def build_rewrite_messages(
         for line in poem.lines
         if line.number in request.target_line_numbers
     )
+    fixed_text = "\n".join(
+        f"- 第{line.number}句：{line.text}"
+        for line in poem.lines
+        if line.number not in request.target_line_numbers
+    ) or "- 无（全部重写）"
     requirement = request.requirement.strip() or "保持原作题旨并提升语言自然度与诗意。"
     return [
         {
             "role": "system",
             "content": (
-                "你是一位精通古典诗词格律的编辑。你只改写指定诗句，其他诗句仅作上下文。"
+                "你是一位精通古典诗词格律的编辑。你改写指定诗句，并逐字保留其他诗句。"
                 "不要输出隐藏思维过程或 <think> 标签。"
             ),
         },
@@ -30,15 +35,16 @@ def build_rewrite_messages(
                 "/no_think\n"
                 f"请改写{targets}。\n"
                 f"改写要求：{requirement}\n\n"
-                "先用一句话说明准备如何调整立意、意象或收束方式；不得在这句话中提前写出"
-                "完整候选诗句。随后只输出指定句，不得复述未修改部分。\n\n"
+                "先用一句话说明如何让改写句与所有保留句在语义和章法上衔接；不得在这句话中"
+                "提前写出完整候选诗句。随后输出完整诗稿。保留句会在解码时被逐字固定，"
+                "它们也是续写后文的真实上下文；不要把前一目标句的意思误当成保留句。\n\n"
                 "严格使用以下格式：\n"
                 f"{PLAN_MARKER}一句修改思路，单行、不超过80字并以句号结束。\n"
                 f"{REWRITE_MARKER}\n"
-                "按原句序输出替换诗句\n\n"
+                f"按原句序输出完整的 {len(poem.lines)} 句诗稿\n\n"
                 f"【目标句】\n{target_text}\n\n"
+                f"【逐字保留句】\n{fixed_text}\n\n"
                 f"【完整原诗】\n{poem.source}"
             ),
         },
     ]
-

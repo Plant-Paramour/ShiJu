@@ -49,6 +49,9 @@ class WorkerApiClient:
             },
         )
 
+    def candidate_update(self, job_id: str, worker_id: str, ordinal: int, **fields) -> None:
+        self._post(f"/internal/v1/jobs/{job_id}/candidates", {"worker_id": worker_id, "ordinal": ordinal, **fields})
+
     def _post(self, path: str, payload: dict[str, Any]):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = Request(
@@ -67,4 +70,3 @@ class WorkerApiClient:
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"控制面请求失败 {exc.code}: {detail}") from exc
-

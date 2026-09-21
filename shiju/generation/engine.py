@@ -24,6 +24,7 @@ from ..tasks import (
 )
 from ..vocab import VocabIndex
 from .model_runner import ModelRunner
+from .protocol import GenerationProtocolError, parse_generation_protocol
 from .result import GenerationCandidate
 from .session import ActivationMarkerDeadline
 
@@ -54,6 +55,7 @@ class GenerationEngine:
         request: GeneratePoemRequest,
         *,
         use_constraints: bool = True,
+        on_candidate_event=None,
     ) -> dict[str, Any]:
         runtime, vocab = self._runtime_for(request)
         prompt = self.runner.render_chat(
@@ -62,34 +64,44 @@ class GenerationEngine:
         )
         prompt_length = self._prompt_length(prompt)
         candidates = []
-        for _ in range(request.candidate_count):
-            processors = None
-            if use_constraints:
-                processors = (
-                    runtime.create_processor(
-                        vocab,
-                        self.runner.tokenizer,
-                        prompt_length,
-                    ),
-                )
-            raw = self.runner.generate(
-                prompt,
-                request.sampling,
-                logits_processors=processors,
-            )
-            candidates.append(
-                GenerationCandidate(
-                    raw_output=raw,
-                    text=runtime.process_output(raw),
-                ).to_dict()
-            )
+        for ordinal in range(1, request.candidate_count + 1):
+            last_error = None
+            for attempt in range(1, 4):
+                if on_candidate_event: on_candidate_event("candidate.started", {"ordinal": ordinal, "attempt": attempt})
+                processors = None
+                if use_constraints:
+                    processors = (runtime.create_processor(vocab, self.runner.tokenizer, prompt_length),)
+                partial = ""
+                def on_text(piece: str) -> None:
+                    nonlocal partial
+                    partial += piece
+                    if on_candidate_event:
+                        on_candidate_event("candidate.delta", {"ordinal": ordinal, "attempt": attempt, "delta": piece, "partial_text": partial})
+                if hasattr(self.runner, "generate_streaming"):
+                    raw = self.runner.generate_streaming(prompt, request.sampling, logits_processors=processors, on_text=on_text)
+                else:
+                    raw = self.runner.generate(prompt, request.sampling, logits_processors=processors)
+                    on_text(raw)
+                try:
+                    parsed = parse_generation_protocol(raw)
+                except GenerationProtocolError as exc:
+                    last_error = exc
+                    if on_candidate_event: on_candidate_event("candidate.retry", {"ordinal": ordinal, "attempt": attempt, "error": str(exc)})
+                    continue
+                candidate = {"raw_output": raw, "text": runtime.process_output(raw), "title": parsed.title, "content": parsed.content}
+                candidates.append(candidate)
+                if on_candidate_event: on_candidate_event("candidate.completed", {"ordinal": ordinal, "attempt": attempt, **candidate})
+                break
+            else:
+                if on_candidate_event: on_candidate_event("candidate.failed", {"ordinal": ordinal, "error": str(last_error)})
+                raise ModelProtocolFailure(f"候选 {ordinal} 连续三次未遵守生成协议: {last_error}") from last_error
         return {
             "status": "succeeded",
             "candidates": candidates,
             "config": request.to_dict(),
         }
 
-    def rewrite_poem(self, request: RewritePoemRequest) -> dict[str, Any]:
+    def rewrite_poem(self, request: RewritePoemRequest, *, on_candidate_event=None) -> dict[str, Any]:
         parsed = parse_poem(request.original_text)
         if request.meter_type == "排律" and request.num_lines is None:
             request = RewritePoemRequest(
@@ -107,9 +119,11 @@ class GenerationEngine:
         prompt_length = self._prompt_length(prompt)
 
         candidates: list[dict[str, Any]] = []
-        for _ in range(request.candidate_count):
+        for ordinal in range(1, request.candidate_count + 1):
             last_error: Exception | None = None
-            for attempt in range(2):
+            for attempt in range(3):
+                attempt_number = attempt + 1
+                if on_candidate_event: on_candidate_event("candidate.started", {"ordinal": ordinal, "attempt": attempt_number})
                 active_messages = messages
                 if attempt:
                     active_messages = [
@@ -118,7 +132,7 @@ class GenerationEngine:
                             "role": "user",
                             "content": messages[1]["content"] + (
                                 "\n\n上一次响应未遵守格式。必须只输出一行 [plan] 规划，"
-                                "随后输出 [rewrite] 和指定替换诗句。"
+                                "随后输出 [rewrite] 和包含固定原句的完整诗稿。"
                             ),
                         },
                     ]
@@ -137,21 +151,25 @@ class GenerationEngine:
                     REWRITE_MARKER,
                     max_tokens=128,
                 )
-                raw = self.runner.generate(
-                    prompt,
-                    request.sampling,
-                    logits_processors=(processor,),
-                    stopping_criteria=(deadline,),
-                )
+                partial = ""
+                def on_text(piece: str) -> None:
+                    nonlocal partial
+                    partial += piece
+                    if on_candidate_event: on_candidate_event("candidate.delta", {"ordinal": ordinal, "attempt": attempt_number, "delta": piece, "partial_text": partial})
+                if hasattr(self.runner, "generate_streaming"):
+                    raw = self.runner.generate_streaming(prompt, request.sampling, logits_processors=(processor,), stopping_criteria=(deadline,), on_text=on_text)
+                else:
+                    raw = self.runner.generate(prompt, request.sampling, logits_processors=(processor,), stopping_criteria=(deadline,))
+                    on_text(raw)
                 try:
                     protocol = parse_rewrite_protocol(raw)
                     replacements = plan.replacements_from_text(protocol.rewrite_text)
                     full_text = plan.apply(replacements)
                 except (RewriteProtocolError, PoemParseError) as exc:
                     last_error = exc
+                    if on_candidate_event: on_candidate_event("candidate.retry", {"ordinal": ordinal, "attempt": attempt_number, "error": str(exc)})
                     continue
-                candidates.append(
-                    {
+                candidate = {
                         "revision_note": protocol.revision_note,
                         "replacements": {
                             str(number): text for number, text in replacements.items()
@@ -169,11 +187,13 @@ class GenerationEngine:
                         },
                         "raw_output": raw,
                     }
-                )
+                candidates.append(candidate)
+                if on_candidate_event: on_candidate_event("candidate.completed", {"ordinal": ordinal, "attempt": attempt_number, "title": request.theme, "content": full_text, **candidate})
                 break
             else:
+                if on_candidate_event: on_candidate_event("candidate.failed", {"ordinal": ordinal, "attempt": 3, "error": str(last_error)})
                 raise ModelProtocolFailure(
-                    f"模型连续两次未遵守重写协议: {last_error}"
+                    f"模型连续三次未遵守重写协议: {last_error}"
                 ) from last_error
 
         primary = candidates[0]

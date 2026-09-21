@@ -534,16 +534,20 @@ class RelationalConstraintSession(BaseConstraintSession):
         pattern: str,
     ) -> RhymeConstraint | None:
         self._ensure_line(state.line_index)
-        is_rhyming = self._is_rhyming_line(state.line_index)
         expected = "平" if "平" in self._rhyme_type else "仄"
+        if state.line_index == 0 and not self._line0_rhymes:
+            if pattern[-1] != expected:
+                return RhymeConstraint.none()
+            if self._locked_rhyme_parts:
+                return RhymeConstraint.specific(expected, self._locked_rhyme_parts)
+            return RhymeConstraint.any(expected)
+        is_rhyming = self._is_rhyming_line(state.line_index)
         if is_rhyming:
             if pattern[-1] != expected:
                 return None
             if self._locked_rhyme_parts:
                 return RhymeConstraint.specific(expected, self._locked_rhyme_parts)
             return RhymeConstraint.any(expected)
-        if state.line_index == 0:
-            return RhymeConstraint.none()
         opposite = "仄" if expected == "平" else "平"
         if pattern[-1] != opposite:
             return None

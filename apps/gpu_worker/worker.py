@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import threading
+import time
 from typing import Any
 
 from shiju.service.generation_service import GenerationService
@@ -17,10 +19,11 @@ class GpuWorker:
         self,
         worker_id: str,
         client: WorkerApiClient,
-        service: GenerationService,
+        service: GenerationService | None,
         capabilities: dict[str, Any],
         *,
         heartbeat_seconds: int = 15,
+        process_runner=None,
     ):
         self.worker_id = worker_id
         self.client = client
@@ -28,6 +31,7 @@ class GpuWorker:
         self.capabilities = capabilities
         self.heartbeat_seconds = heartbeat_seconds
         self._stopping = threading.Event()
+        self.process_runner = process_runner
 
     def stop(self) -> None:
         self._stopping.set()
@@ -42,6 +46,7 @@ class GpuWorker:
                 continue
             if not job:
                 continue
+            LOGGER.info("领取任务: job_id=%s kind=%s", job["job_id"], job["kind"])
             self._execute(job)
 
     def _execute(self, job: dict[str, Any]) -> None:
@@ -54,9 +59,17 @@ class GpuWorker:
         )
         heartbeat.start()
         try:
-            result = self.service.execute(job["kind"], job["request"])
+            if self.service is not None:
+                result = self.service.execute(job["kind"], job["request"])
+            elif self.process_runner is not None:
+                result = self.process_runner(
+                    job["kind"], job["request"],
+                    lambda event_type, payload: self._report_candidate_event(job_id, event_type, payload),
+                )
+            else:
+                raise RuntimeError("GPU Worker 未配置任务执行子进程")
             self.client.complete(job_id, self.worker_id, result)
-            LOGGER.info("任务完成", extra={"job_id": job_id})
+            LOGGER.info("任务完成: job_id=%s", job_id)
         except Exception as exc:
             LOGGER.exception("任务执行失败", extra={"job_id": job_id})
             code = str(getattr(exc, "code", "WORKER_EXECUTION_ERROR"))
@@ -71,10 +84,30 @@ class GpuWorker:
             heartbeat_stop.set()
             heartbeat.join(timeout=1)
 
+    def _report_candidate_event(self, job_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        ordinal = int(payload.get("ordinal", 0) or 0)
+        if ordinal < 1:
+            return
+        fields: dict[str, Any] = {"attempt": int(payload.get("attempt", 0) or 0)}
+        if event_type == "candidate.started":
+            fields.update(status="running", partial_text="", error="", started_at=time.time())
+        elif event_type == "candidate.delta":
+            fields.update(status="running", partial_text=str(payload.get("partial_text") or ""))
+        elif event_type == "candidate.retry":
+            fields.update(status="retrying", error=str(payload.get("error") or "协议校验失败"))
+        elif event_type == "candidate.completed":
+            fields.update(status="succeeded", partial_text=str(payload.get("text") or payload.get("content") or ""),
+                          raw_text=str(payload.get("raw_output") or ""), title=payload.get("title"),
+                          content=payload.get("content"), error="", finished_at=time.time())
+        elif event_type == "candidate.failed":
+            fields.update(status="failed", error=str(payload.get("error") or "生成失败"), finished_at=time.time())
+        else:
+            return
+        self.client.candidate_update(job_id, self.worker_id, ordinal, **fields)
+
     def _heartbeat_loop(self, job_id: str, stop: threading.Event) -> None:
         while not stop.wait(self.heartbeat_seconds):
             try:
                 self.client.heartbeat(job_id, self.worker_id)
             except Exception:
                 LOGGER.exception("任务心跳失败", extra={"job_id": job_id})
-

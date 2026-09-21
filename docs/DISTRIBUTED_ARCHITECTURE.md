@@ -1,7 +1,7 @@
 # 诗矩双服务器架构
 
 本文档规定诗矩从本地脚本演进为“常驻控制面 + 按需 GPU Worker”的实现边界。当前
-MVP 不包含用户、论坛、真实 Agent 和云厂商自动开关机。
+MVP 已包含本地轻量 Agent，不包含用户、论坛和云厂商自动开关机。
 
 ## 1. 部署角色
 
@@ -35,6 +35,7 @@ shiju/
   rewriting/                                        指定句解析、规划和协议
   service/                                          面向 Worker 的应用服务
 apps/
+  agent/                                            OpenAI-compatible 工具编排
   api/                                              常驻控制面
   gpu_worker/                                       T4 主动领取进程
 deploy/systemd/                                     两端进程配置
@@ -95,13 +96,16 @@ deploy/systemd/                                     两端进程配置
 - `[plan]` 后只能有一句、单行、不超过 80 字且以句号结束的修改思路。
 - Qwen 原生 thinking 关闭；显式规划不能包含完整候选诗句。
 - `[rewrite]` 出现前，约束处理器不推进格律状态。
-- `[rewrite]` 出现后，处理器只允许目标句的格律候选。
-- 128 个新增 token 内没有进入 `[rewrite]` 时终止本次采样并重试一次。
-- 两次协议失败返回 `MODEL_PROTOCOL_ERROR`，不能接受未约束文本。
+- `[rewrite]` 出现后，处理器约束完整诗稿：目标句使用格律候选，固定句只允许原文 token。
+- 128 个新增 token 内没有进入 `[rewrite]` 时终止本次采样并重试。
+- 三次协议失败返回 `MODEL_PROTOCOL_ERROR`，不能接受未约束文本。
 - 固定前后文共同预锁起式与韵部；上下文无严格解返回
   `CONTEXT_CONSTRAINT_CONFLICT`。
-- 支持任意一至四句，包括不连续句。固定间隔由 `RewriteController` 在同一格律会话中
-  自动消费。
+- 支持任意一至六十四句，包括不连续句。固定句由 `RewriteController` 和 logits
+  processor 逐 token 强制写入生成序列，而不是只在内部状态中跳过，因此它们会成为
+  生成后续诗句的真实注意力上下文。
+- 所有固定句在解码开始前共同反推韵部、首句是否入韵和全局平仄基式；前文生成同样受
+  中间固定句所确定的粘对关系约束。
 
 结果始终包含 `revision_note`、`replacements`、`full_text`、`display_text` 和格律
 验证；前端或 Agent 应向用户展示 `display_text`。
@@ -114,6 +118,11 @@ Worker。任务领取使用 `BEGIN IMMEDIATE`，保证同一任务不会被两�
 任务执行时记录 Worker、尝试次数和租约截止时间。Worker 异常退出后，下一个领取请求
 会恢复过期任务；达到最大尝试次数后任务进入 `failed`。API 重启不会丢失排队任务和
 已完成结果。
+
+Worker 按候选序号串行生成。每个候选完成时立即写入 `job_candidates`，并以
+`(job_id, candidate_ordinal)` 幂等归档到 `poems`，因此前端和个人中心无需等待整批完成。
+浏览器使用同一套格律核心比较全部诗式和四本韵书，将最高分的完整评分 JSON 回写候选与
+作品；之后查看详情只读数据库，不重复占用评分计算资源。旧作品缺评分时由个人中心补算一次。
 
 MVP 的 `ManualGpuProvider` 不调用云厂商接口。提交任务时如果没有在线 Worker，返回
 `waiting_for_worker: true`，由运维人员启动 T4。未来云厂商适配器只能实现
@@ -147,8 +156,7 @@ sudo cp deploy/systemd/gpu-worker.env.example /etc/shiju/gpu-worker.env
 ## 7. 后续阶段
 
 1. 接入云厂商 GPU 开关机 API 和空闲关机策略。
-2. 用 OpenAPI Schema 注册真实 Agent 工具。
-3. 增加用户、会话、作品和论坛数据库，不与任务表混写领域逻辑。
+2. 将当前本地 Agent 会话接入 Web，并持久化用户、会话与待确认方案。
+3. 增加用户、作品和论坛数据库，不与任务表混写领域逻辑。
 4. 数据量或控制面实例数增长后，再将 SQLite 迁移到 PostgreSQL；MVP 不引入 Redis
    或 Celery。
-

@@ -119,6 +119,33 @@ def test_relational_session_repeats_dual_and_sticky_pattern_for_pailv():
     assert controller.candidate_context().base_tone == first_base
 
 
+def test_relational_fixed_middle_couplet_locks_rhyme_and_global_pattern():
+    lexicon = FakeLexicon()
+    profile = RelationalConstraintProfile(5, 8, "平韵", lexicon)
+    session = profile.create_session()
+
+    session.prime_fixed_lines(
+        {
+            4: "山山山雨雨",
+            5: "雨雨雨山春",
+        }
+    )
+
+    controller = GenerationController(GenerationStateMachine(profile.layout), session)
+    context = controller.candidate_context()
+    assert context.global_base_tone == 0
+    assert context.base_tone == 0
+    assert context.locked_rhyme_parts == frozenset({"一"})
+
+    controller.advance("山山山雨")
+    endings = controller.allowed_patterns(max_length=1)
+    level = [item for item in endings if item.tones == "平"]
+    oblique = [item for item in endings if item.tones == "仄"]
+    assert level and all(item.rhyme.mode is RhymeMode.PARTS for item in level)
+    assert all(item.rhyme.parts == frozenset({"一"}) for item in level)
+    assert oblique and all(item.rhyme.mode is RhymeMode.NONE for item in oblique)
+
+
 def test_pailv_only_opens_major_ao_position_on_non_rhyming_lines():
     lexicon = FakeLexicon()
     profile = RelationalConstraintProfile(7, 12, "平韵", lexicon, allow_aojiu=True)

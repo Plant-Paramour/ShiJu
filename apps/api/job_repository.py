@@ -10,6 +10,7 @@ from typing import Any, Mapping
 from shiju.contracts import JobStatus
 
 from .database import Database
+from .event_repository import EventRepository
 
 
 class JobNotFound(KeyError):
@@ -41,6 +42,8 @@ class JobRecord:
     updated_at: float
     started_at: float | None
     finished_at: float | None
+    user_id: str | None = None
+    conversation_id: str | None = None
 
     def to_dict(self, *, include_request: bool = False) -> dict[str, Any]:
         value = {
@@ -58,6 +61,8 @@ class JobRecord:
             "updated_at": self.updated_at,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "user_id": self.user_id,
+            "conversation_id": self.conversation_id,
         }
         if include_request:
             value["request"] = self.request
@@ -76,6 +81,8 @@ class JobRepository:
         *,
         idempotency_key: str | None = None,
         max_attempts: int = 2,
+        user_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> JobRecord:
         canonical = json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         request_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -96,8 +103,8 @@ class JobRepository:
                 """
                 INSERT INTO jobs(
                     id, kind, status, request_json, request_hash, idempotency_key,
-                    attempts, max_attempts, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                    attempts, max_attempts, created_at, updated_at, user_id, conversation_id
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -109,10 +116,23 @@ class JobRepository:
                     max_attempts,
                     now,
                     now,
+                    user_id,
+                    conversation_id,
                 ),
             )
+            candidate_count = int(request.get("candidate_count", 0) or 0)
+            if candidate_count > 0:
+                for ordinal in range(1, candidate_count + 1):
+                    connection.execute(
+                        "INSERT INTO job_candidates(id,job_id,ordinal,updated_at) VALUES (?,?,?,?)",
+                        (str(uuid.uuid4()), job_id, ordinal, now),
+                    )
             row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-            return self._record(row)
+            record = self._record(row)
+        EventRepository(self.database, clock=self._clock).append_job_event(
+            job_id, "job.submitted", {"kind": kind, "total": candidate_count}
+        )
+        return record
 
     def get(self, job_id: str) -> JobRecord:
         with self.database.connect() as connection:
@@ -120,6 +140,38 @@ class JobRepository:
         if row is None:
             raise JobNotFound(job_id)
         return self._record(row)
+
+    def assign_user(self, job_id: str, user_id: str) -> None:
+        with self.database.connect() as connection:
+            connection.execute("UPDATE jobs SET user_id = ? WHERE id = ? AND user_id IS NULL", (user_id, job_id))
+
+    def assign_context(self, job_id: str, user_id: str, conversation_id: str | None) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE jobs SET user_id = ?, conversation_id = ? WHERE id = ?",
+                (user_id, conversation_id, job_id),
+            )
+
+    def list_for_user(
+        self,
+        user_id: str,
+        conversation_id: str | None = None,
+        *,
+        active_only: bool = False,
+    ) -> list[JobRecord]:
+        clauses = ["user_id = ?"]
+        params: list[Any] = [user_id]
+        if conversation_id:
+            clauses.append("conversation_id = ?")
+            params.append(conversation_id)
+        if active_only:
+            clauses.append("status IN ('queued', 'running')")
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM jobs WHERE {' AND '.join(clauses)} ORDER BY created_at",
+                params,
+            ).fetchall()
+        return [self._record(row) for row in rows]
 
     def claim(
         self,
@@ -197,6 +249,12 @@ class JobRepository:
             )
         if updated.rowcount != 1:
             raise JobOwnershipError(job_id)
+        row = self.get(job_id)
+        if row.user_id:
+            from .user_repository import UserRepository
+
+            UserRepository(self.database).save_poem(row.user_id, job_id, row.request, dict(result))
+        EventRepository(self.database, clock=self._clock).append_job_event(job_id, "job.completed", {"result": dict(result)})
 
     def fail(
         self,
@@ -233,6 +291,97 @@ class JobRepository:
                     job_id,
                 ),
             )
+        EventRepository(self.database, clock=self._clock).append_job_event(job_id, "job.failed", {"code": code, "message": message, "retrying": should_retry})
+
+    def update_candidate(self, job_id: str, ordinal: int, *, status: str | None = None,
+                         attempt: int | None = None, partial_text: str | None = None,
+                         raw_text: str | None = None, title: str | None = None,
+                         content: str | None = None, error: str | None = None,
+                         started_at: float | None = None, finished_at: float | None = None) -> dict[str, Any]:
+        fields = {"status": status, "attempt": attempt, "partial_text": partial_text, "raw_text": raw_text,
+                  "title": title, "content": content, "error": error, "started_at": started_at, "finished_at": finished_at}
+        fields = {key: value for key, value in fields.items() if value is not None}
+        fields["updated_at"] = self._clock()
+        with self.database.connect() as connection:
+            existing = connection.execute("SELECT id FROM job_candidates WHERE job_id=? AND ordinal=?", (job_id, ordinal)).fetchone()
+            if existing is None:
+                connection.execute("INSERT INTO job_candidates(id,job_id,ordinal,updated_at) VALUES (?,?,?,?)", (str(uuid.uuid4()), job_id, ordinal, fields["updated_at"]))
+            assignments = ", ".join(f"{key}=?" for key in fields)
+            connection.execute(f"UPDATE job_candidates SET {assignments} WHERE job_id=? AND ordinal=?", (*fields.values(), job_id, ordinal))
+            row = connection.execute("SELECT * FROM job_candidates WHERE job_id=? AND ordinal=?", (job_id, ordinal)).fetchone()
+        value = dict(row)
+        evaluation_json = value.pop("evaluation_json", None)
+        value["evaluation"] = json.loads(evaluation_json) if evaluation_json else None
+        job = self.get(job_id)
+        if status == "succeeded" and job.user_id and content:
+            from .user_repository import UserRepository
+
+            UserRepository(self.database).save_candidate_poem(
+                job.user_id,
+                job_id,
+                ordinal,
+                job.request,
+                {
+                    "title": title,
+                    "content": content,
+                    "text": content,
+                },
+                value.get("evaluation"),
+            )
+        EventRepository(self.database, clock=self._clock).append_job_event(job_id, "candidate.updated", value)
+        return value
+
+    def save_candidate_evaluation(
+        self,
+        job_id: str,
+        ordinal: int,
+        evaluation: Mapping[str, Any],
+        *,
+        user_id: str,
+    ) -> dict[str, Any]:
+        job = self.get(job_id)
+        if job.user_id != user_id:
+            raise JobNotFound(job_id)
+        payload = json.dumps(dict(evaluation), ensure_ascii=False, separators=(",", ":"))
+        now = self._clock()
+        with self.database.connect() as connection:
+            updated = connection.execute(
+                "UPDATE job_candidates SET evaluation_json=?,updated_at=? "
+                "WHERE job_id=? AND ordinal=? AND status='succeeded'",
+                (payload, now, job_id, ordinal),
+            )
+            if updated.rowcount != 1:
+                raise ValueError("候选尚未生成完成")
+            connection.execute(
+                "UPDATE poems SET evaluation_json=? "
+                "WHERE job_id=? AND candidate_ordinal=? AND user_id=?",
+                (payload, job_id, ordinal, user_id),
+            )
+        EventRepository(self.database, clock=self._clock).append_job_event(
+            job_id,
+            "candidate.evaluated",
+            {"ordinal": ordinal, "evaluation": dict(evaluation)},
+        )
+        return dict(evaluation)
+
+    def candidates(self, job_id: str) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT ordinal,status,attempt,partial_text,raw_text,title,content,error,started_at,finished_at,updated_at,evaluation_json FROM job_candidates WHERE job_id=? ORDER BY ordinal", (job_id,)).fetchall()
+        values = []
+        for row in rows:
+            value = dict(row)
+            evaluation_json = value.pop("evaluation_json", None)
+            value["evaluation"] = json.loads(evaluation_json) if evaluation_json else None
+            values.append(value)
+        return values
+
+    def snapshot(self, job_id: str) -> dict[str, Any]:
+        job = self.get(job_id)
+        candidates = self.candidates(job_id)
+        total = len(candidates) or int(job.request.get("candidate_count", 0) or 0)
+        completed = sum(1 for item in candidates if item["status"] == "succeeded")
+        return {"job_id": job_id, "kind": job.kind, "status": job.status, "total": total, "completed": completed,
+                "request": job.request, "candidates": candidates, "result": job.result, "error": job.to_dict()["error"]}
 
     def has_live_worker(self, *, max_age_seconds: int = 45) -> bool:
         threshold = self._clock() - max_age_seconds
@@ -294,5 +443,6 @@ class JobRepository:
             updated_at=row["updated_at"],
             started_at=row["started_at"],
             finished_at=row["finished_at"],
+            user_id=row["user_id"] if "user_id" in row.keys() else None,
+            conversation_id=row["conversation_id"] if "conversation_id" in row.keys() else None,
         )
-

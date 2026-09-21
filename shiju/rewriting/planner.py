@@ -70,17 +70,21 @@ class RewritePlan:
         transformed = self.runtime.process_output(CONTENT_MARKER + rewrite_text)
         _, marker, content = transformed.partition(CONTENT_MARKER)
         generated = parse_poem(content if marker else transformed)
-        if len(generated.lines) != len(self.target_indices):
+        if len(generated.lines) != len(self.poem.lines):
             raise PoemParseError(
-                f"模型应输出 {len(self.target_indices)} 句，实际输出 {len(generated.lines)} 句"
+                f"模型应输出完整的 {len(self.poem.lines)} 句，实际输出 {len(generated.lines)} 句"
             )
         replacements: dict[int, str] = {}
-        for generated_line, target_index in zip(generated.lines, self.target_indices):
+        for target_index, generated_line in enumerate(generated.lines):
             expected = self.runtime.profile.layout.lines[target_index].length
             if len(generated_line.text) != expected:
                 raise PoemParseError(
                     f"第 {target_index + 1} 句应为 {expected} 字，实际为 {len(generated_line.text)} 字"
                 )
+            if target_index in self.fixed_lines:
+                if generated_line.text != self.fixed_lines[target_index]:
+                    raise PoemParseError(f"第 {target_index + 1} 句是固定句，不得改动")
+                continue
             replacements[target_index + 1] = generated_line.source_text
         return replacements
 

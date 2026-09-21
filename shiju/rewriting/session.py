@@ -8,7 +8,7 @@ from ..state import GenerationController
 
 
 class RewriteController:
-    """Expose only target lines while advancing immutable lines internally."""
+    """Generate a full poem while exposing immutable lines as forced prefixes."""
 
     def __init__(
         self,
@@ -19,7 +19,6 @@ class RewriteController:
         self._controller = controller
         self._fixed_lines = dict(fixed_lines)
         self._target_indices = frozenset(target_indices)
-        self._skip_fixed_lines()
 
     @property
     def layout(self):
@@ -29,9 +28,7 @@ class RewriteController:
         return self._controller.snapshot()
 
     def advance(self, text: str) -> None:
-        for char in text:
-            self._controller.advance(char)
-            self._skip_fixed_lines()
+        self._controller.advance(text)
 
     def allowed_patterns(self, max_length: int = 4) -> Sequence[AllowedPattern]:
         return self._controller.allowed_patterns(max_length)
@@ -42,26 +39,23 @@ class RewriteController:
     def candidate_context(self) -> Any:
         return self._controller.candidate_context()
 
-    def _skip_fixed_lines(self) -> None:
-        while True:
-            state = self._controller.snapshot()
-            if state.is_finished or state.line_index in self._target_indices:
-                return
-            if state.step is not StepKind.TEXT or state.char_index != 0:
-                raise RuntimeError("重写控制器只能在完整句边界跳过固定内容")
-            try:
-                text = self._fixed_lines[state.line_index]
-            except KeyError as exc:
-                raise RuntimeError(f"缺少第 {state.line_index + 1} 句固定上下文") from exc
-            self._controller.advance(self._canonical_line(state.line_index, text))
-
-    def _canonical_line(self, line_index: int, text: str) -> str:
-        layout = self._controller.layout.lines[line_index]
+    def forced_prefix(self) -> str | None:
+        """Return the exact fixed text that must be decoded at this position."""
+        state = self._controller.snapshot()
+        if (
+            state.is_finished
+            or state.line_index in self._target_indices
+            or state.step not in {StepKind.TEXT, StepKind.CAESURA}
+        ):
+            return None
+        try:
+            text = self._fixed_lines[state.line_index]
+        except KeyError as exc:
+            raise RuntimeError(f"缺少第 {state.line_index + 1} 句固定上下文") from exc
+        layout = self._controller.layout.lines[state.line_index]
         result: list[str] = []
-        for position, char in enumerate(text, start=1):
-            result.append(char)
-            if position in layout.caesura_positions:
+        for index in range(state.char_index, len(text)):
+            if index in layout.caesura_positions:
                 result.append("、")
-        result.append("\n" if layout.stanza_end else "，")
+            result.append(text[index])
         return "".join(result)
-

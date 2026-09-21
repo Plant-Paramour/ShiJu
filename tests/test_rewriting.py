@@ -83,7 +83,7 @@ def test_rewrite_protocol_rejects_invalid_shapes(text):
         parse_rewrite_protocol(text)
 
 
-def test_non_contiguous_rewrite_skips_fixed_lines_inside_same_controller(tmp_path):
+def test_non_contiguous_rewrite_forces_fixed_lines_into_generated_context(tmp_path):
     tokenizer = FakeTokenizer()
     lexicon = FakeLexicon()
     vocab = FakeVocab(tokenizer, lexicon)
@@ -109,21 +109,76 @@ def test_non_contiguous_rewrite_skips_fixed_lines_inside_same_controller(tmp_pat
 
     assert controller.snapshot().line_index == 0
     controller.advance("月雨山山夜，")
+    assert controller.snapshot().line_index == 1
+    assert controller.forced_prefix() == "雨山雨雨山"
+    controller.advance("雨山雨雨山。")
     assert controller.snapshot().line_index == 2
-    assert "雨山雨雨山" in controller.snapshot().all_text
-    controller.advance("月雨山山夜，")
+    controller.advance("月雨山山夜，山雨山山春。")
     assert controller.snapshot().is_finished
+    assert "雨山雨雨山" in controller.snapshot().all_text
 
-    replacements = plan.replacements_from_text("月雨山山夜，月雨山山夜。")
+    replacements = plan.replacements_from_text(
+        "月雨山山夜，雨山雨雨山。月雨山山夜，山雨山山春。"
+    )
     result = plan.apply(replacements)
     assert result == "月雨山山夜，雨山雨雨山。月雨山山夜，山雨山山春。"
+
+
+def test_processor_forces_fixed_tokens_into_model_output(tmp_path):
+    tokenizer = EngineTokenizer({20: "[rewrite]"})
+    runtime, vocab = _rewrite_runtime(tmp_path, tokenizer)
+    request = RewritePoemRequest(
+        original_text="山雨山山雨，雨山雨雨山。山雨山山雨，山雨山山春。",
+        target_line_numbers=(2, 3, 4),
+        meter_type="唐诗",
+        form_name="五言绝句",
+        candidate_count=1,
+    )
+    plan = RewritePlan.build(request, runtime)
+    processor = runtime.create_processor(
+        vocab,
+        tokenizer,
+        0,
+        controller=plan.create_controller(),
+        activation_marker="[rewrite]",
+    )
+    scores = torch.zeros((1, 21))
+
+    first = processor(torch.tensor([[20]]), scores)
+    assert torch.isfinite(first[0, 2])
+    assert torch.isneginf(first[0, 3])
+
+    second = processor(torch.tensor([[20, 2]]), scores)
+    assert torch.isfinite(second[0, 3])
+    assert torch.isneginf(second[0, 2])
+
+
+def test_full_rewrite_output_rejects_changed_fixed_line(tmp_path):
+    tokenizer = FakeTokenizer()
+    runtime, _ = _rewrite_runtime(tmp_path, tokenizer)
+    plan = RewritePlan.build(
+        RewritePoemRequest(
+            original_text="山雨山山雨，雨山雨雨山。山雨山山雨，山雨山山春。",
+            target_line_numbers=(1, 2, 4),
+            meter_type="唐诗",
+            form_name="五言绝句",
+            candidate_count=1,
+        ),
+        runtime,
+    )
+
+    with pytest.raises(Exception, match="第 3 句是固定句"):
+        plan.replacements_from_text(
+            "月雨山山夜，雨山雨雨春。月雨山山夜，山雨山山花。"
+        )
 
 
 def test_generation_engine_retries_protocol_once_then_succeeds(tmp_path, monkeypatch):
     runner = FakeRunner(
         [
             "缺少协议标记",
-            "[plan]改用月夜意象承接原诗余韵。\n[rewrite]\n月雨山山夜，月雨山山夜。",
+            "[plan]改用月夜意象承接原诗余韵。\n[rewrite]\n"
+            "月雨山山夜，雨山雨雨山。月雨山山夜，山雨山山春。",
         ]
     )
     runtime, vocab = _rewrite_runtime(tmp_path, runner.tokenizer)
@@ -147,7 +202,7 @@ def test_generation_engine_retries_protocol_once_then_succeeds(tmp_path, monkeyp
     assert result["replacements"] == {"1": "月雨山山夜", "3": "月雨山山夜"}
 
 
-def test_generation_engine_stops_after_one_protocol_retry(tmp_path, monkeypatch):
+def test_generation_engine_stops_after_three_protocol_attempts(tmp_path, monkeypatch):
     runner = FakeRunner(["第一次失败", "第二次失败", "不应被使用"])
     runtime, vocab = _rewrite_runtime(tmp_path, runner.tokenizer)
     engine = GenerationEngine(runner)
@@ -164,5 +219,5 @@ def test_generation_engine_stops_after_one_protocol_retry(tmp_path, monkeypatch)
             )
         )
 
-    assert runner.generate_calls == 2
-    assert runner.outputs == ["不应被使用"]
+    assert runner.generate_calls == 3
+    assert runner.outputs == []

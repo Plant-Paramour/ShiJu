@@ -46,12 +46,11 @@ def parse_rewrite_protocol(text: str) -> RewriteProtocolOutput:
 
     rewrite_text = text[rewrite_at + len(REWRITE_MARKER) :].strip()
     if not rewrite_text:
-        raise RewriteProtocolError("[rewrite] 后缺少替换诗句")
+        raise RewriteProtocolError("[rewrite] 后缺少完整诗稿")
     if PLAN_MARKER in rewrite_text or REWRITE_MARKER in rewrite_text:
-        raise RewriteProtocolError("替换诗句中不得再次出现协议标记")
+        raise RewriteProtocolError("完整诗稿中不得再次出现协议标记")
     return RewriteProtocolOutput(revision_note=note, rewrite_text=rewrite_text)
 
 
 def build_display_text(revision_note: str, full_text: str) -> str:
     return f"修改思路：{revision_note}\n\n{full_text}"
-
