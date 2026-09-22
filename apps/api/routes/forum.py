@@ -1,16 +1,11 @@
 from __future__ import annotations
 
-import re
-
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from .auth import current_user
 from ..schemas import ForumDraftModel, ForumReactionModel, ForumReplyCreateModel, ForumReplyPatchModel, ForumReportModel, ForumThreadCreateModel, ForumThreadPatchModel
 
 router = APIRouter(prefix="/v1/forum", tags=["forum"])
-
-MENTION_RE = re.compile(r"@([A-Za-z0-9_\-\u4e00-\u9fff]{2,64})")
-
 
 def _user(request: Request, authorization: str | None, *, required: bool = True):
     return current_user(request, authorization, required=required)
@@ -27,20 +22,6 @@ def _can_write(request: Request, user: dict, section_id: str):
     if section["is_locked"] and user.get("role") != "admin": raise HTTPException(status_code=423, detail="分区已锁定")
     if request.app.state.forum.permission(user["id"], section["id"]) not in {"write", "moderate"} and user.get("role") != "admin": raise HTTPException(status_code=403, detail="没有发帖权限")
     return section
-
-
-def _notify_mentions(request: Request, content: str, actor_id: str, thread_id: str, reply_id: str | None, notified: set[str] | None = None) -> set[str]:
-    recipients = notified if notified is not None else set()
-    usernames = set(MENTION_RE.findall(content))
-    if not usernames: return recipients
-    placeholders = ",".join("?" for _ in usernames)
-    with request.app.state.forum.database.connect() as db:
-        rows = db.execute(f"SELECT id FROM users WHERE username COLLATE NOCASE IN ({placeholders})", tuple(usernames)).fetchall()
-    for row in rows:
-        if row["id"] not in recipients:
-            request.app.state.forum.create_notification(row["id"], "mention", actor_id, thread_id, reply_id)
-            recipients.add(row["id"])
-    return recipients
 
 
 @router.get("/sections")
@@ -65,7 +46,6 @@ def create_thread(section_id: str, body: ForumThreadCreateModel, request: Reques
     user = _user(request, authorization); section = _can_write(request, user, section_id)
     try:
         thread = request.app.state.forum.create_thread(user["id"], section["id"], body.title, body.content, body.tags, body.poem_ids)
-        _notify_mentions(request, body.content, user["id"], thread["id"], None)
         request.app.state.forum.clear_drafts(user["id"], "thread")
         return thread
     except ValueError as exc: raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -116,18 +96,18 @@ def create_reply(thread_id: str, body: ForumReplyCreateModel, request: Request, 
     if reply is None: raise HTTPException(status_code=423, detail="主题帖已锁定或内容不可发布")
     notified = set()
     owner_id = thread["author"]["id"]
-    request.app.state.forum.create_notification(owner_id, "reply", user["id"], thread_id, reply["id"])
+    notification_payload = {"content": body.content}
+    request.app.state.forum.create_notification(owner_id, "reply", user["id"], thread_id, reply["id"], notification_payload)
     notified.add(owner_id)
     if body.parent_reply_id:
         with request.app.state.forum.database.connect() as db: parent = db.execute("SELECT author_id FROM forum_replies WHERE id=?", (body.parent_reply_id,)).fetchone()
         if parent and parent["author_id"] not in notified:
-            request.app.state.forum.create_notification(parent["author_id"], "mention", user["id"], thread_id, reply["id"])
+            request.app.state.forum.create_notification(parent["author_id"], "reply", user["id"], thread_id, reply["id"], notification_payload)
             notified.add(parent["author_id"])
-    _notify_mentions(request, body.content, user["id"], thread_id, reply["id"], notified)
     with request.app.state.forum.database.connect() as db: followers = db.execute("SELECT user_id FROM forum_thread_follows WHERE thread_id=?", (thread_id,)).fetchall()
     for follower in followers:
         if follower["user_id"] not in notified:
-            request.app.state.forum.create_notification(follower["user_id"], "thread_followed", user["id"], thread_id, reply["id"])
+            request.app.state.forum.create_notification(follower["user_id"], "thread_followed", user["id"], thread_id, reply["id"], notification_payload)
             notified.add(follower["user_id"])
     request.app.state.forum.clear_drafts(user["id"], "reply", thread_id)
     return reply

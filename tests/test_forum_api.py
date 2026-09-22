@@ -119,7 +119,7 @@ def test_reply_tree_draft_cleanup_and_notification_recipients(tmp_path):
     thread = client.post(f"/v1/forum/sections/{section_id}/threads", headers=owner, json={"title": "通知边界", "content": "正文"}).json()
     assert client.get("/v1/forum/drafts?kind=thread", headers=owner).json()["items"] == []
 
-    first = client.post(f"/v1/forum/threads/{thread['id']}/replies", headers=commenter, json={"content": "第一条评论"}).json()
+    first = client.post(f"/v1/forum/threads/{thread['id']}/replies", headers=commenter, json={"content": "@Test1 第一条评论"}).json()
     client.post(f"/v1/forum/threads/{thread['id']}/replies", headers=other, json={"content": "互不相关的评论"})
     nested = client.post(f"/v1/forum/threads/{thread['id']}/replies", headers=other, json={"content": "回复第二位诗友", "parent_reply_id": first["id"]})
     assert nested.status_code == 201
@@ -131,7 +131,9 @@ def test_reply_tree_draft_cleanup_and_notification_recipients(tmp_path):
     owner_notices = client.get("/v1/forum/notifications", headers=owner).json()["items"]
     assert sum(item["notification_type"] == "reply" for item in owner_notices) == 3
     commenter_notices = client.get("/v1/forum/notifications", headers=commenter).json()["items"]
-    assert [item["notification_type"] for item in commenter_notices] == ["mention"]
+    assert [item["notification_type"] for item in commenter_notices] == ["reply"]
+    assert commenter_notices[0]["payload"]["content"] == "回复第二位诗友"
+    assert not any(item["notification_type"] == "mention" for item in owner_notices + commenter_notices)
 
     client.put("/v1/forum/drafts", headers=other, json={"kind": "reply", "thread_id": thread["id"], "content": "回复草稿"})
     client.post(f"/v1/forum/threads/{thread['id']}/replies", headers=other, json={"content": "发布后清理"})

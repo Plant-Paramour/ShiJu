@@ -7,7 +7,7 @@ const routeTitles = {
   forum: "诗友论坛 · 诗矩",
   "forum-thread": "主题讨论 · 诗矩",
   "forum-compose": "发布话题 · 诗矩",
-  notifications: "通知中心 · 诗矩",
+  notifications: "通知 · 诗矩",
   "public-profile": "用户主页 · 诗矩",
   profile: "个人中心 · 诗矩",
   admin: "管理后台 · 诗矩",
@@ -324,7 +324,24 @@ avatarCropForm?.addEventListener("submit", async (event) => {
 
 const chatForm = document.querySelector("#chat-form");
 const chatInput = document.querySelector("#chat-input");
+const chatThreadScroll = document.querySelector("#chat-thread-scroll");
 const chatThread = document.querySelector("#chat-thread");
+const chatWelcome = document.querySelector("#chat-welcome");
+const chatLayout = document.querySelector(".chat-layout");
+const conversationSearch = document.querySelector("#conversation-search");
+const conversationSearchInput = document.querySelector("#conversation-search-input");
+const poemScrollContentMaxWidth = 684;
+function syncChatContentWidth() {
+  if (!chatThreadScroll || !chatLayout) return;
+  const available = chatThreadScroll.clientWidth;
+  const width = window.matchMedia("(max-width: 760px)").matches
+    ? Math.max(0, available - 36)
+    : Math.min(poemScrollContentMaxWidth, Math.max(0, available - 48));
+  chatLayout.style.setProperty("--chat-content-width", `${width}px`);
+}
+syncChatContentWidth();
+new ResizeObserver(syncChatContentWidth).observe(chatThreadScroll);
+window.addEventListener("resize", syncChatContentWidth);
 const chatSubmit = chatForm.querySelector("button[type='submit']");
 const agentStatus = document.querySelector("#agent-status");
 const initialThreadMarkup = chatThread.innerHTML;
@@ -351,14 +368,16 @@ async function loadConversations({ restore = false } = {}) {
       const row = document.createElement("div"); row.className = "conversation-row";
       const button = document.createElement("button"); button.type = "button"; button.textContent = item.title || "新建对话"; button.dataset.conversationId = item.id;
       if (item.id === currentConversationId) button.setAttribute("aria-current", "true");
+      const rename = document.createElement("button"); rename.type = "button"; rename.className = "conversation-rename"; rename.dataset.renameConversation = item.id; rename.title = "修改对话名称"; rename.setAttribute("aria-label", `修改对话名称：${item.title || "新建对话"}`); rename.textContent = "改名";
       const archive = document.createElement("button"); archive.type = "button"; archive.className = "conversation-archive"; archive.dataset.archiveConversation = item.id; archive.title = "归档对话"; archive.setAttribute("aria-label", `归档对话：${item.title || "新建对话"}`); archive.textContent = "归档";
-      row.append(button, archive); list.append(row);
+      row.append(button, rename, archive); list.append(row);
     });
     if (restore) {
       const savedId = localStorage.getItem(`shiju_conversation_${currentUser.id}`);
       const target = payload.items.find((item) => item.id === savedId) || payload.items[0];
       if (target) await openConversation(target.id);
     }
+    filterConversations();
   } catch { /* 登录状态可能已过期，发送消息时会提示 */ }
 }
 
@@ -515,7 +534,7 @@ function updatePoemLayout(article) {
     }
     return widestRow;
   }));
-  const horizontalWidth = Math.min(article.parentElement?.clientWidth || 855, 855);
+  const horizontalWidth = Math.min(article.clientWidth || article.parentElement?.clientWidth || 855, 855);
   const horizontalWidthRatio = horizontalNaturalWidth / horizontalWidth;
   const vertical = horizontalWidthRatio > 2 / 3;
   article.classList.toggle("poem-handscroll--vertical", vertical);
@@ -959,13 +978,17 @@ function resetAuthenticatedUi() {
   chatBusy = false;
   chatThread.innerHTML = initialThreadMarkup;
   chatInput.value = "";
+  chatLayout.classList.remove("is-sidebar-collapsed");
+  conversationSearch.hidden = true;
+  conversationSearchInput.value = "";
   document.querySelector("#conversation-list").innerHTML = "<p>登录后查看历史对话</p>";
   for (const selector of ["#poem-list", "#favorite-list", "#collection-list", "#archive-list", "#notification-list", "#following-list", "#user-search-results", "#thread-page-content", "#compose-preview", "#reply-poem-preview", "#compose-poem-preview"]) document.querySelector(selector)?.replaceChildren();
   document.querySelector("#compose-form").reset();
-  document.querySelector("#notification-count").hidden = true;
-  document.querySelector("#notification-count").textContent = "";
+  const headerBadge = document.querySelector("#header-notification-badge");
+  if (headerBadge) { headerBadge.hidden = true; headerBadge.textContent = ""; }
   window.forumComposePoemIds = []; window.forumReplyPoemIds = [];
   ownedPoems = []; favoritePoems = []; profilePoems = []; profileCollections = [];
+  notificationItems = [];
   sessionStorage.removeItem("shiju_share_poem");
 }
 
@@ -977,7 +1000,7 @@ async function loadCurrentUser() {
   if (currentUser) {
     if (routeFromHash() === "home") showRoute("chat", { scroll: false });
     await loadConversations({ restore: true }); await loadProfileData();
-    try { const notices = await apiFetch("/v1/forum/notifications?limit=5"); const badge = document.querySelector("#notification-count"); badge.textContent = notices.unread || ""; badge.hidden = !(notices.unread > 0); await renderDrawerNotifications(notices); } catch { /* forum notification store may not exist on an older database */ }
+    try { const notices = await apiFetch("/v1/forum/notifications?limit=5"); await renderDrawerNotifications(notices); } catch { /* forum notification store may not exist on an older database */ }
     if (routeFromHash() === "admin") await loadAdminData();
   }
 }
@@ -986,22 +1009,37 @@ function appendMessage(text, role, state = "") {
   const article = document.createElement("article");
   article.className = `chat-message chat-message--${role}`;
   if (state) article.classList.add(`chat-message--${state}`);
+  const avatar = document.createElement("div");
+  avatar.className = `message-avatar message-avatar--${role}`;
+  avatar.setAttribute("aria-hidden", "true");
   if (role === "assistant") {
-    const avatar = document.createElement("div");
-    avatar.className = "message-avatar";
-    avatar.setAttribute("aria-hidden", "true");
-    avatar.textContent = "诗";
-    article.append(avatar);
-  }
+    const image = document.createElement("img");
+    image.src = new URL("./ai-avatar.svg", import.meta.url).href;
+    image.alt = "";
+    avatar.append(image);
+  } else setUserAvatar(avatar, currentUser);
   const content = document.createElement("div");
   content.className = "message-content";
   const paragraph = document.createElement("p");
   paragraph.textContent = role === "assistant" ? normalizeAssistantText(text) : text;
   content.append(paragraph);
-  article.append(content);
+  if (role === "assistant") article.append(avatar, content);
+  else article.append(content, avatar);
   chatThread.append(article);
-  chatThread.scrollTop = chatThread.scrollHeight;
+  chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
   return article;
+}
+
+function filterConversations() {
+  const query = conversationSearchInput?.value.trim().toLocaleLowerCase() || "";
+  document.querySelectorAll("#conversation-list .conversation-row").forEach((row) => {
+    const title = row.querySelector("button[data-conversation-id]")?.textContent?.trim().toLocaleLowerCase() || "";
+    row.hidden = Boolean(query && !title.includes(query));
+  });
+}
+
+function hideChatWelcome() {
+  if (chatWelcome) chatWelcome.hidden = true;
 }
 
 function replaceMessage(article, text, state = "") {
@@ -1009,7 +1047,7 @@ function replaceMessage(article, text, state = "") {
   content.textContent = normalizeAssistantText(text);
   article.classList.remove("chat-message--pending", "chat-message--error");
   if (state) article.classList.add(`chat-message--${state}`);
-  chatThread.scrollTop = chatThread.scrollHeight;
+  chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
 }
 
 function appendProposalEditor(prepared) {
@@ -1155,7 +1193,7 @@ function appendProposalEditor(prepared) {
   body.append(config, actions);
   panel.append(summary, body);
   chatThread.append(panel);
-  chatThread.scrollTop = chatThread.scrollHeight;
+  chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
 }
 
 function setChatBusy(busy) {
@@ -1328,7 +1366,7 @@ function startJobProgress(jobId, initialJob = null) {
   details.className = "job-progress"; details.open = true;
   details.dataset.jobId = jobId;
   details.innerHTML = "<summary><span>诗词生成进度</span><span class=\"job-progress__count\">0 / 0</span></summary><p class=\"job-progress__status\">任务已提交，等待 Worker……</p><div class=\"job-progress__candidates\"></div><div class=\"job-progress__results\" aria-live=\"polite\"></div>";
-  chatThread.append(details); chatThread.scrollTop = chatThread.scrollHeight;
+  chatThread.append(details); chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
   const statusNode = details.querySelector(".job-progress__status");
   const resultsNode = details.querySelector(".job-progress__results");
   const countNode = details.querySelector(".job-progress__count");
@@ -1422,6 +1460,7 @@ chatForm.addEventListener("submit", async (event) => {
     chatInput.focus();
     return;
   }
+  hideChatWelcome();
   appendMessage(message, "user");
   chatInput.value = "";
   chatInput.style.height = "";
@@ -1511,6 +1550,22 @@ chatThread.addEventListener("click", (event) => {
   chatInput.focus();
 });
 
+document.querySelector("#conversation-search-toggle")?.addEventListener("click", () => {
+  const open = conversationSearch.hidden;
+  conversationSearch.hidden = !open;
+  if (open) conversationSearchInput.focus();
+  else { conversationSearchInput.value = ""; filterConversations(); }
+});
+conversationSearchInput?.addEventListener("input", filterConversations);
+document.querySelector("#chat-sidebar-toggle")?.addEventListener("click", () => {
+  chatLayout.classList.add("is-sidebar-collapsed");
+  document.querySelector("#chat-sidebar-reopen").focus();
+});
+document.querySelector("#chat-sidebar-reopen")?.addEventListener("click", () => {
+  chatLayout.classList.remove("is-sidebar-collapsed");
+  document.querySelector("#chat-sidebar-toggle").focus();
+});
+
 document.querySelector("#new-chat").addEventListener("click", () => {
   if (!requireLogin()) return;
   activeChatRequest?.abort();
@@ -1531,7 +1586,71 @@ document.querySelector("#new-chat").addEventListener("click", () => {
   announce("已新建对话。");
 });
 
+function beginConversationRename(row, conversationId) {
+  if (!row || row.classList.contains("is-renaming")) return;
+  const titleButton = row.querySelector("button[data-conversation-id]");
+  const currentTitle = titleButton?.textContent?.trim() || "新建对话";
+  row.classList.add("is-renaming");
+  titleButton.hidden = true;
+  row.querySelector("[data-rename-conversation]")?.setAttribute("hidden", "true");
+  row.querySelector("[data-archive-conversation]")?.setAttribute("hidden", "true");
+  const input = document.createElement("input");
+  input.className = "conversation-rename-input";
+  input.value = currentTitle;
+  input.maxLength = 120;
+  input.setAttribute("aria-label", "新的对话名称");
+  const save = document.createElement("button");
+  save.type = "button"; save.className = "conversation-rename-save"; save.dataset.saveConversation = conversationId; save.textContent = "保存";
+  const cancel = document.createElement("button");
+  cancel.type = "button"; cancel.className = "conversation-rename-cancel"; cancel.dataset.cancelConversation = conversationId; cancel.textContent = "取消";
+  row.prepend(input); row.append(save, cancel);
+  input.focus(); input.select();
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") { event.preventDefault(); save.click(); }
+    if (event.key === "Escape") { event.preventDefault(); cancel.click(); }
+  });
+}
+
+function cancelConversationRename(row) {
+  if (!row) return;
+  const input = row.querySelector(".conversation-rename-input");
+  const titleButton = row.querySelector("button[data-conversation-id]");
+  input?.remove();
+  row.querySelector("[data-save-conversation]")?.remove();
+  row.querySelector("[data-cancel-conversation]")?.remove();
+  titleButton.hidden = false;
+  row.querySelector("[data-rename-conversation]")?.removeAttribute("hidden");
+  row.querySelector("[data-archive-conversation]")?.removeAttribute("hidden");
+  row.classList.remove("is-renaming");
+}
+
+async function saveConversationRename(row, conversationId) {
+  const input = row?.querySelector(".conversation-rename-input");
+  const title = input?.value.trim();
+  if (!title) { announce("请输入对话名称。"); input?.focus(); return; }
+  const save = row.querySelector("[data-save-conversation]");
+  save.disabled = true;
+  try {
+    const updated = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) });
+    const titleButton = row.querySelector("button[data-conversation-id]");
+    titleButton.textContent = updated.title || title;
+    titleButton.setAttribute("aria-label", `打开对话：${updated.title || title}`);
+    row.querySelector("[data-rename-conversation]")?.setAttribute("aria-label", `修改对话名称：${updated.title || title}`);
+    cancelConversationRename(row);
+    announce("对话名称已更新。");
+  } catch (error) {
+    save.disabled = false;
+    announce(`修改名称失败：${error.message}`);
+  }
+}
+
 document.querySelector("#conversation-list").addEventListener("click", async (event) => {
+  const rename = event.target.closest("[data-rename-conversation]");
+  if (rename) { beginConversationRename(rename.closest(".conversation-row"), rename.dataset.renameConversation); return; }
+  const saveRename = event.target.closest("[data-save-conversation]");
+  if (saveRename) { await saveConversationRename(saveRename.closest(".conversation-row"), saveRename.dataset.saveConversation); return; }
+  const cancelRename = event.target.closest("[data-cancel-conversation]");
+  if (cancelRename) { cancelConversationRename(cancelRename.closest(".conversation-row")); return; }
   const archive = event.target.closest("[data-archive-conversation]");
   if (archive) { pendingArchiveId = archive.dataset.archiveConversation; document.querySelector("#archive-dialog").showModal(); return; }
   const button = event.target.closest("button[data-conversation-id]");
@@ -1702,10 +1821,6 @@ function updateComposePreview() {
 }
 
 function bindEditorTools(root = document) {
-  root.querySelectorAll("[data-insert-mention]").forEach((button) => {
-    if (button.dataset.bound) return; button.dataset.bound = "true";
-    button.addEventListener("click", () => { const input = document.querySelector(button.dataset.insertMention); if (!input) return; const start = input.selectionStart ?? input.value.length; input.setRangeText("@", start, input.selectionEnd ?? start, "end"); input.focus(); input.dispatchEvent(new Event("input", { bubbles: true })); });
-  });
   root.querySelectorAll("[data-empty-emoji]").forEach((button) => { if (button.dataset.bound) return; button.dataset.bound = "true"; button.addEventListener("click", () => announce("表情功能将在后续开放")); });
 }
 
@@ -1859,6 +1974,12 @@ function createMobileReplyNode(reply, children, threadId, depth = 0) {
 
 async function loadThreadPage() {
   const match = window.location.hash.match(/^#forum\/thread\/([^/]+)/); const id = match ? decodeURIComponent(match[1]) : ""; if (!id) return;
+  const threadBackLink = document.querySelector("#thread-back-link");
+  if (threadBackLink) {
+    const fromNotifications = notificationFromThread();
+    threadBackLink.href = fromNotifications ? "#notifications" : "#forum";
+    threadBackLink.textContent = fromNotifications ? "← 返回通知" : "← 返回论坛";
+  }
   const container = document.querySelector("#thread-page-content"); container.innerHTML = '<p class="empty-state">正在加载主题……</p>'; forumState.threadId = id; forumState.replyParentId = "";
   try {
     const [thread, replies] = await Promise.all([apiFetch(`/v1/forum/threads/${encodeURIComponent(id)}`), apiFetch(`/v1/forum/threads/${encodeURIComponent(id)}/replies?limit=100`)]);
@@ -1887,7 +2008,7 @@ async function loadThreadPage() {
     (replies.items || []).filter((reply) => !reply.parent_reply_id || !byId.has(reply.parent_reply_id)).forEach((reply) => replyList.append((mobileThread ? createMobileReplyNode : replyNode)(reply, children, id)));
 
     const form = document.createElement("form"); form.className = "thread-reply-form";
-    form.innerHTML = '<input type="hidden" id="thread-reply-parent"><div id="thread-reply-target-label" class="reply-target-label" hidden><span></span><button type="button" aria-label="取消回复目标" title="取消回复">×</button></div><textarea id="thread-reply-content" rows="5" maxlength="20000" required placeholder="写下你的回应……"></textarea><div id="reply-poem-preview" class="editor-poem-preview" hidden></div><div class="editor-actions editor-actions--split"><div class="editor-tools"><button type="button" class="editor-tool" id="thread-reply-share" aria-label="分享诗作" title="分享诗作">+</button><button type="button" class="editor-tool" data-insert-mention="#thread-reply-content" aria-label="提及用户" title="提及用户">@</button><button type="button" class="editor-tool" data-empty-emoji aria-label="表情" title="表情功能暂未开放">:-)</button></div><span class="form-status" id="thread-reply-draft-status"></span><button type="submit" class="primary-button">发送回复</button></div><p class="form-status" id="thread-reply-status"></p>';
+    form.innerHTML = '<input type="hidden" id="thread-reply-parent"><div id="thread-reply-target-label" class="reply-target-label" hidden><span></span><button type="button" aria-label="取消回复目标" title="取消回复">×</button></div><textarea id="thread-reply-content" rows="5" maxlength="20000" required placeholder="写下你的回应……"></textarea><div id="reply-poem-preview" class="editor-poem-preview" hidden></div><div class="editor-actions editor-actions--split"><div class="editor-tools"><button type="button" class="editor-tool" id="thread-reply-share" aria-label="分享诗作" title="分享诗作">+</button><button type="button" class="editor-tool" data-empty-emoji aria-label="表情" title="表情功能暂未开放">:-)</button></div><span class="form-status" id="thread-reply-draft-status"></span><button type="submit" class="primary-button">发送回复</button></div><p class="form-status" id="thread-reply-status"></p>';
     form.querySelector("#thread-reply-target-label button").addEventListener("click", () => { forumState.replyParentId = ""; form.querySelector("#thread-reply-parent").value = ""; delete form.querySelector("#thread-reply-target-label").dataset.replyId; form.querySelector("#thread-reply-target-label").hidden = true; });
     form.querySelector("#thread-reply-share").addEventListener("click", () => openPoemPicker((poem) => { window.forumReplyPoemIds = [poem.id]; renderEditorPoems(form.querySelector("#reply-poem-preview"), window.forumReplyPoemIds); announce(`已选择《${poem.title}》`); }));
     bindEditorTools(form);
@@ -1901,7 +2022,7 @@ async function loadThreadPage() {
     }
     form.addEventListener("submit", async (event) => { event.preventDefault(); if (!requireLogin()) return; const content = form.querySelector("#thread-reply-content").value.trim(); const parentReplyId = forumState.replyParentId || form.querySelector("#thread-reply-target-label").dataset.replyId || null; try { await apiFetch(`/v1/forum/threads/${id}/replies`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content, parent_reply_id: parentReplyId, poem_ids: window.forumReplyPoemIds || [] }) }); window.forumReplyPoemIds = []; forumState.replyParentId = ""; await loadThreadPage(); announce("回复已发送"); } catch (error) { form.querySelector("#thread-reply-status").textContent = error.message; } });
     container.append(heading, body, controls, replyHeading, replyList, form);
-    const anchorMatch = window.location.hash.match(/\/reply\/([^/]+)$/);
+    const anchorMatch = window.location.hash.match(/\/reply\/([^/?]+)(?:\?|$)/);
     if (anchorMatch) requestAnimationFrame(() => document.querySelector(`#reply-${CSS.escape(decodeURIComponent(anchorMatch[1]))}`)?.scrollIntoView({ block: "center" }));
   } catch (error) { container.innerHTML = `<p class="empty-state">无法打开主题：${error.message}</p>`; }
 }
@@ -1928,12 +2049,84 @@ async function loadComposePage() {
   }
 }
 
+let notificationItems = [];
+
+function notificationCopy(type) {
+  return {
+    reply: "回复了你的主题",
+    thread_followed: "在你关注的主题中发表了新回复",
+    reaction_like: "赞了你的内容",
+    reaction_question: "对你的内容表示疑惑",
+    report_resolved: "处理了你的举报",
+  }[type] || "有一条新通知";
+}
+
+function notificationDestination(item) {
+  if (!item.thread_id) return "notifications";
+  const threadId = encodeURIComponent(item.thread_id);
+  const replyPath = item.reply_id ? `/reply/${encodeURIComponent(item.reply_id)}` : "";
+  return `forum/thread/${threadId}${replyPath}?from=notifications`;
+}
+
+function notificationFromThread() {
+  return new URLSearchParams(window.location.hash.split("?")[1] || "").get("from") === "notifications";
+}
+
+async function openNotification(item) {
+  try {
+    if (!item.read_at) {
+      await apiFetch(`/v1/forum/notifications/read?notification_id=${encodeURIComponent(item.id)}`, { method: "POST" });
+      item.read_at = Date.now() / 1000;
+    }
+    if (item.thread_id) window.location.hash = notificationDestination(item);
+    else await loadNotifications();
+  } catch (error) { announce(`通知处理失败：${error.message}`); }
+}
+
+function renderNotificationList(items = notificationItems) {
+  const list = document.querySelector("#notification-list");
+  if (!list) return;
+  list.replaceChildren();
+  const visibleItems = items;
+  if (!visibleItems.length) {
+    const empty = document.createElement("p"); empty.className = "empty-state";
+    empty.textContent = "暂无通知。";
+    list.append(empty); return;
+  }
+  visibleItems.forEach((item) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = `notification-row${item.read_at ? "" : " is-unread"}`;
+    const actor = { display_name: item.actor_display_name || "有人", username: item.actor_username, avatar_url: item.actor_avatar_url };
+    row.append(forumAvatar(actor, "notification-row__avatar"));
+
+    const body = document.createElement("span"); body.className = "notification-row__body";
+    const title = document.createElement("span"); title.className = "notification-row__title";
+    const name = document.createElement("strong"); name.textContent = actor.display_name;
+    const action = document.createElement("span"); action.textContent = notificationCopy(item.notification_type);
+    title.append(name, action);
+    const originalContent = item.payload?.content || item.content || "";
+    const excerpt = document.createElement("span"); excerpt.className = "notification-row__excerpt"; excerpt.textContent = originalContent;
+    const meta = document.createElement("span"); meta.className = "notification-row__meta";
+    const time = document.createElement("time"); time.dateTime = new Date(Number(item.created_at) * 1000).toISOString(); time.textContent = formatForumTime(item.created_at);
+    const target = document.createElement("span"); target.textContent = item.thread_id ? "查看讨论" : "查看详情";
+    meta.append(time, target); body.append(title); if (originalContent) body.append(excerpt); body.append(meta); row.append(body);
+    row.addEventListener("click", () => openNotification(item));
+    list.append(row);
+  });
+}
+
 async function loadNotifications() {
   if (!requireLogin()) return;
-  const payload = await apiFetch("/v1/forum/notifications"); const list = document.querySelector("#notification-list"); list.replaceChildren(); if (!payload.items?.length) { list.innerHTML = '<p class="empty-state">暂无通知。</p>'; await renderDrawerNotifications(payload); return; }
-  payload.items.forEach((item) => { const row = document.createElement("article"); row.className = `notification-row${item.read_at ? "" : " is-unread"}`; const actor = item.actor_display_name || "有人"; const text = { reply: `${actor} 回复了你的主题`, mention: `${actor} 回复了你的评论`, thread_followed: `${actor} 在你关注的主题中发表了新回复`, reaction_like: `${actor} 赞了你的内容`, reaction_question: `${actor} 对你的内容表示疑惑`, report_resolved: "你的举报已有处理结果" }[item.notification_type] || "你有一条新通知"; row.innerHTML = `<strong>${text}</strong><time>${formatForumTime(item.created_at)}</time>`; row.addEventListener("click", async () => { await apiFetch(`/v1/forum/notifications/read?notification_id=${item.id}`, { method: "POST" }); if (item.thread_id) window.location.hash = `forum/thread/${item.thread_id}${item.reply_id ? `/reply/${item.reply_id}` : ""}`; else await loadNotifications(); }); list.append(row); });
-  document.querySelector("#notification-count").textContent = payload.unread || ""; document.querySelector("#notification-count").hidden = !(payload.unread > 0);
-  await renderDrawerNotifications(payload);
+  try {
+    const payload = await apiFetch("/v1/forum/notifications");
+    notificationItems = payload.items || [];
+    renderNotificationList();
+    await renderDrawerNotifications(payload);
+  } catch (error) {
+    const list = document.querySelector("#notification-list");
+    if (list) list.innerHTML = `<p class="empty-state">无法加载通知：${error.message}</p>`;
+  }
 }
 
 async function renderDrawerNotifications(payload) {
@@ -1948,8 +2141,14 @@ async function renderDrawerNotifications(payload) {
   items.forEach((item) => {
     const row = document.createElement("button"); row.type = "button"; row.className = `drawer-notification${item.read_at ? "" : " is-unread"}`;
     const actor = item.actor_display_name || "有人";
-    row.innerHTML = `<span>${actor} ${item.notification_type === "reply" ? "回复了你的主题" : "有一条新通知"}</span><time>${formatForumTime(item.created_at)}</time>`;
-    row.addEventListener("click", () => { closeDrawers(); window.location.hash = item.thread_id ? `forum/thread/${item.thread_id}` : "notifications"; });
+    const copy = document.createElement("span"); copy.className = "drawer-notification__copy";
+    const title = document.createElement("strong"); title.textContent = `${actor} ${notificationCopy(item.notification_type)}`;
+    const originalContent = item.payload?.content || item.content || "";
+    const excerpt = document.createElement("small"); excerpt.className = "drawer-notification__excerpt"; excerpt.textContent = originalContent;
+    copy.append(title); if (originalContent) copy.append(excerpt);
+    const time = document.createElement("time"); time.textContent = formatForumTime(item.created_at);
+    row.append(copy, time);
+    row.addEventListener("click", () => { closeDrawers(); openNotification(item); });
     list.append(row);
   });
 }
@@ -2000,7 +2199,6 @@ document.querySelector("#share-poem-button")?.addEventListener("click", () => op
 document.querySelectorAll("#compose-title, #compose-tags, #compose-section, #compose-content").forEach((input) => input.addEventListener(input.tagName === "SELECT" ? "change" : "input", () => { if (input.id === "compose-content") updateComposePreview(); window.clearTimeout(document.querySelector("#compose-form")._draftTimer); document.querySelector("#draft-status").textContent = "保存中……"; document.querySelector("#compose-form")._draftTimer = window.setTimeout(saveComposeDraft, 700); }));
 document.querySelectorAll("[data-editor-tab]").forEach((tab) => tab.addEventListener("click", () => { document.querySelectorAll("[data-editor-tab]").forEach((item) => item.classList.toggle("is-active", item === tab)); const preview = tab.dataset.editorTab === "preview"; document.querySelector("#compose-content").hidden = preview; document.querySelector("#compose-preview").hidden = !preview; }));
 document.querySelector("#mark-notifications-read")?.addEventListener("click", async () => { await apiFetch("/v1/forum/notifications/read", { method: "POST" }); await loadNotifications(); });
-
 document.querySelector("#forum-publish-button").addEventListener("click", openThreadDialog);
 
 let pendingArchiveId = null;
@@ -2138,5 +2336,5 @@ function setupInkLandscape() {
   draw();
 }
 
-showRoute(routeFromHash(), { scroll: false });
+showRoute(window.location.hash ? routeFromHash() : "chat", { scroll: false });
 setupInkLandscape();

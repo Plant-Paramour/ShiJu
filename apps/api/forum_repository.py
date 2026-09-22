@@ -226,8 +226,19 @@ class ForumRepository:
     def list_notifications(self, user_id: str, page: int = 1, limit: int = 30) -> dict[str, Any]:
         page, limit = max(1, page), min(max(1, limit), 100)
         with self.database.connect() as db:
-            total = db.execute("SELECT COUNT(*) FROM forum_notifications WHERE user_id=?", (user_id,)).fetchone()[0]; unread = db.execute("SELECT COUNT(*) FROM forum_notifications WHERE user_id=? AND read_at IS NULL", (user_id,)).fetchone()[0]; rows = db.execute("SELECT n.*,u.username AS actor_username,u.display_name AS actor_display_name FROM forum_notifications n LEFT JOIN users u ON u.id=n.actor_id WHERE n.user_id=? ORDER BY n.created_at DESC LIMIT ? OFFSET ?", (user_id, limit, (page - 1) * limit)).fetchall()
-        return {"items": [{**dict(row), "payload": json.loads(row["payload_json"] or "{}")} for row in rows], "page": page, "limit": limit, "total": total, "unread": unread}
+            total = db.execute("SELECT COUNT(*) FROM forum_notifications WHERE user_id=?", (user_id,)).fetchone()[0]; unread = db.execute("SELECT COUNT(*) FROM forum_notifications WHERE user_id=? AND read_at IS NULL", (user_id,)).fetchone()[0]; rows = db.execute("SELECT n.*,u.username AS actor_username,u.display_name AS actor_display_name,u.avatar_url AS actor_avatar_url,r.content AS reply_content,t.content AS thread_content FROM forum_notifications n LEFT JOIN users u ON u.id=n.actor_id LEFT JOIN forum_replies r ON r.id=n.reply_id LEFT JOIN forum_threads t ON t.id=n.thread_id WHERE n.user_id=? ORDER BY n.created_at DESC LIMIT ? OFFSET ?", (user_id, limit, (page - 1) * limit)).fetchall()
+        items = []
+        for row in rows:
+            item = dict(row)
+            payload = json.loads(item.pop("payload_json", "{}") or "{}")
+            if not payload.get("content"):
+                original = item.get("reply_content") or item.get("thread_content")
+                if original:
+                    payload["content"] = original
+            item.pop("reply_content", None); item.pop("thread_content", None)
+            item["payload"] = payload
+            items.append(item)
+        return {"items": items, "page": page, "limit": limit, "total": total, "unread": unread}
 
     def mark_notifications_read(self, user_id: str, notification_id: str | None = None) -> int:
         with self.database.connect() as db:

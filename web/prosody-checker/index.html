@@ -6,7 +6,7 @@
   <meta name="description" content="诗矩：面向中文诗词创作、对话与格律检查的前端原型。">
   <title>诗矩 · 中文诗词创作空间</title>
   <link rel="stylesheet" href="./han/han-scoped.css">
-  <link rel="stylesheet" href="./styles.css?v=23">
+  <link rel="stylesheet" href="./styles.css?v=34">
 </head>
 <body data-han-scope data-theme="song" data-han-intensity="1" data-han-accent-families="vermilion">
   <a class="han-skip-link" href="#main-content">跳到主要内容</a>
@@ -26,7 +26,6 @@
         <a href="#chat" data-route-link="chat">AI 对话</a>
         <a href="#prosody" data-route-link="prosody">格律检测</a>
         <a href="#forum" data-route-link="forum">诗友论坛</a>
-        <a href="#notifications" data-route-link="notifications">通知<span id="notification-count" class="notification-count" hidden>0</span></a>
         <a href="#admin" data-route-link="admin" id="admin-nav-link" hidden>管理后台</a>
       </nav>
 
@@ -161,7 +160,17 @@
     <section class="app-view chat-view" data-view="chat" aria-labelledby="chat-title" hidden>
       <div class="chat-layout">
         <aside class="chat-sidebar" aria-label="对话列表">
-          <div class="chat-sidebar__heading"><span>诗矩</span><small>AI 诗词助手</small></div>
+          <div class="chat-sidebar__heading">
+            <div class="chat-sidebar__identity"><span>诗矩</span><small>AI 诗词助手</small></div>
+            <div class="chat-sidebar__tools">
+              <button class="chat-sidebar__tool" type="button" id="conversation-search-toggle" aria-label="搜索历史对话" title="搜索历史对话">⌕</button>
+              <button class="chat-sidebar__tool" type="button" id="chat-sidebar-toggle" aria-label="收起历史对话栏" title="收起历史对话栏">‹</button>
+            </div>
+          </div>
+          <label class="conversation-search" id="conversation-search" hidden>
+            <span class="han-visually-hidden">搜索历史对话</span>
+            <input id="conversation-search-input" type="search" placeholder="搜索对话名称">
+          </label>
           <button class="new-chat-button" type="button" id="new-chat">新建对话</button>
           <nav class="conversation-list" id="conversation-list" aria-label="历史对话">
             <p>登录后查看历史对话</p>
@@ -171,22 +180,24 @@
 
         <div class="chat-main">
           <header class="chat-header">
+            <button class="chat-sidebar-reopen" type="button" id="chat-sidebar-reopen" aria-label="展开历史对话栏" title="展开历史对话栏">›</button>
             <div><p class="eyebrow">AI 对话</p><h1 id="chat-title">与诗矩对谈</h1></div>
             <span class="model-label" id="agent-status" role="status">待连接</span>
           </header>
 
-          <div class="chat-thread" id="chat-thread" aria-live="polite">
-            <article class="chat-message chat-message--assistant">
-              <div class="message-avatar" aria-hidden="true">诗</div>
-              <div class="message-content">
-                <p>你可以从一个意象、一句残稿或一首完整作品开始。</p>
-                <p>也可以直接查询韵书、词牌格律，或让我先整理一份创作方案。</p>
-              </div>
-            </article>
-            <div class="prompt-suggestions" aria-label="示例提问">
-              <button type="button" data-prompt="请用中华新韵查询“春”和“山”的平仄与韵部">查询韵书</button>
-              <button type="button" data-prompt="请直接生成一首秋江夜泊的七言绝句">生成一首</button>
-              <button type="button" data-prompt="请告诉我浣溪沙的格律">查询词牌</button>
+          <div class="chat-thread-scroll" id="chat-thread-scroll">
+            <div class="chat-thread" id="chat-thread" aria-live="polite">
+              <section class="chat-welcome" id="chat-welcome" aria-labelledby="chat-welcome-title">
+                <div class="chat-welcome__avatar"><img src="./ai-avatar.svg" alt="诗矩 AI"></div>
+                <p class="eyebrow">诗矩 AI 诗词助手</p>
+                <h2 id="chat-welcome-title">从一句诗意开始</h2>
+                <p class="chat-welcome__lead">告诉我你的意象、情绪或残稿，我会陪你推敲格律、寻找韵脚，慢慢把诗写完整。</p>
+                <div class="prompt-suggestions" aria-label="示例提问">
+                  <button type="button" data-prompt="请用中华新韵查询“春”和“山”的平仄与韵部">查询韵书</button>
+                  <button type="button" data-prompt="请直接生成一首秋江夜泊的七言绝句">生成一首</button>
+                  <button type="button" data-prompt="请告诉我浣溪沙的格律">查询词牌</button>
+                </div>
+              </section>
             </div>
           </div>
 
@@ -337,7 +348,7 @@
 
     <section class="app-view forum-thread-view" data-view="forum-thread" aria-labelledby="thread-page-title" hidden>
       <div class="forum-shell forum-thread-shell">
-        <a class="back-link" href="#forum">返回论坛</a>
+        <a class="back-link" href="#forum" id="thread-back-link">← 返回论坛</a>
         <div id="thread-page-content"><p class="empty-state">正在加载主题……</p></div>
       </div>
     </section>
@@ -354,13 +365,19 @@
           <textarea id="compose-content" rows="16" maxlength="30000" placeholder="写下你的想法……支持 **Markdown**、代码块和诗词分行。"></textarea>
           <div id="compose-poem-preview" class="editor-poem-preview" hidden></div>
           <div id="compose-preview" class="markdown-preview" hidden></div>
-          <div class="editor-actions editor-actions--split"><div class="editor-tools"><button type="button" class="editor-tool" id="share-poem-button" aria-label="分享诗作" title="分享诗作">+</button><button type="button" class="editor-tool" data-insert-mention="#compose-content" aria-label="提及用户" title="提及用户">@</button><button type="button" class="editor-tool" data-empty-emoji aria-label="表情" title="表情功能暂未开放">:-)</button></div><span id="draft-status" class="form-status"></span><button type="submit" class="primary-button">发布</button></div>
+          <div class="editor-actions editor-actions--split"><div class="editor-tools"><button type="button" class="editor-tool" id="share-poem-button" aria-label="分享诗作" title="分享诗作">+</button><button type="button" class="editor-tool" data-empty-emoji aria-label="表情" title="表情功能暂未开放">:-)</button></div><span id="draft-status" class="form-status"></span><button type="submit" class="primary-button">发布</button></div>
         </form>
       </div>
     </section>
 
     <section class="app-view notifications-view" data-view="notifications" aria-labelledby="notifications-title" hidden>
-      <div class="tool-shell"><header class="tool-heading"><div><p class="eyebrow">消息闭环</p><h1 id="notifications-title">通知中心</h1></div><button type="button" class="quiet-button" id="mark-notifications-read">全部标为已读</button></header><div id="notification-list" class="notification-list"><p class="empty-state">正在加载通知……</p></div></div>
+      <div class="notifications-shell">
+        <header class="notifications-heading">
+          <h1 id="notifications-title">通知</h1>
+          <button type="button" class="quiet-button" id="mark-notifications-read">全部已读</button>
+        </header>
+        <div id="notification-list" class="notification-list"><p class="empty-state">正在加载通知……</p></div>
+      </div>
     </section>
 
     <section class="app-view public-profile-view" data-view="public-profile" aria-labelledby="public-profile-title" hidden>
@@ -427,7 +444,7 @@
 
   <footer class="site-footer"><span>诗矩 · 前端框架预览</span><span>产品文案与业务流程将在后续迭代中完善</span></footer>
   <div id="site-status" class="site-status" role="status" aria-live="polite"></div>
-  <script type="module" src="./site.js?v=21"></script>
+  <script type="module" src="./site.js?v=31"></script>
   <script type="module" src="./app.js?v=7"></script>
 </body>
 </html>
