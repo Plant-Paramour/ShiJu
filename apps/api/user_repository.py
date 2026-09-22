@@ -24,6 +24,15 @@ class UserRepository:
                         "INSERT INTO users(id, username, password_hash, display_name) VALUES (?, ?, ?, ?)",
                         (str(uuid.uuid4()), username, hash_password(username), username),
                     )
+            admin_password = __import__("os").getenv("SHIJU_ADMIN_PASSWORD", "admin123")
+            exists = connection.execute("SELECT 1 FROM users WHERE username = 'admin'").fetchone()
+            if exists is None:
+                connection.execute(
+                    "INSERT INTO users(id, username, password_hash, display_name, role) VALUES (?, ?, ?, ?, 'admin')",
+                    (str(uuid.uuid4()), "admin", hash_password(admin_password), "管理员"),
+                )
+            else:
+                connection.execute("UPDATE users SET role='admin' WHERE username='admin'")
 
     @staticmethod
     def _user(row) -> dict[str, Any]:
@@ -32,7 +41,70 @@ class UserRepository:
             "username": row["username"],
             "display_name": row["display_name"] or row["username"],
             "created_at": row["created_at"],
+            "role": row["role"] if "role" in row.keys() else "user",
+            "bio": row["bio"] if "bio" in row.keys() else "",
+            "avatar_url": row["avatar_url"] if "avatar_url" in row.keys() else None,
+            "notify_on_reaction": bool(row["notify_on_reaction"]) if "notify_on_reaction" in row.keys() else True,
         }
+
+    def update_profile(self, user_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
+        allowed = {key: fields[key] for key in ("display_name", "bio", "avatar_url", "notify_on_reaction") if key in fields}
+        if not allowed: return self.get(user_id)
+        assignments = ",".join(f"{key}=?" for key in allowed)
+        with self.database.connect() as connection:
+            connection.execute(f"UPDATE users SET {assignments} WHERE id=?", (*allowed.values(), user_id))
+            row = connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        return self._user(row) if row else None
+
+    def list_users(self, *, q: str | None = None, page: int = 1, limit: int = 50) -> dict[str, Any]:
+        page = max(page, 1); limit = min(max(limit, 1), 100); offset = (page - 1) * limit
+        clause = "WHERE username LIKE ? OR display_name LIKE ?" if q else ""; args = (f"%{q.strip()}%", f"%{q.strip()}%") if q else ()
+        with self.database.connect() as connection:
+            total = connection.execute(f"SELECT COUNT(*) FROM users {clause}", args).fetchone()[0]
+            rows = connection.execute(f"SELECT * FROM users {clause} ORDER BY created_at DESC LIMIT ? OFFSET ?", (*args, limit, offset)).fetchall()
+        return {"items": [self._user(row) for row in rows], "page": page, "limit": limit, "total": total, "pages": (total + limit - 1) // limit}
+
+    def create_user(self, username: str, password: str, display_name: str | None = None, role: str = "user") -> dict[str, Any]:
+        user_id = str(uuid.uuid4())
+        with self.database.connect() as connection:
+            connection.execute("INSERT INTO users(id,username,password_hash,display_name,role) VALUES (?,?,?,?,?)", (user_id, username.strip(), hash_password(password), (display_name or username).strip(), role))
+            row = connection.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        return self._user(row)
+
+    def register(self, username: str, password: str, display_name: str | None = None) -> dict[str, Any]:
+        return self.create_user(username, password, display_name, "user")
+
+    def create_reset_token(self, username: str) -> str | None:
+        import hashlib
+        import secrets
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT id FROM users WHERE username=?", (username.strip(),)).fetchone()
+            if not row:
+                return None
+            token = secrets.token_urlsafe(32)
+            connection.execute("INSERT INTO auth_reset_tokens(token_hash,user_id,expires_at,created_at) VALUES (?,?,?,?)", (hashlib.sha256(token.encode()).hexdigest(), row["id"], time.time() + 3600, time.time()))
+        return token
+
+    def reset_password(self, token: str, new_password: str) -> bool:
+        import hashlib
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT user_id FROM auth_reset_tokens WHERE token_hash=? AND used_at IS NULL AND expires_at>?", (token_hash, time.time())).fetchone()
+            if not row:
+                return False
+            connection.execute("UPDATE users SET password_hash=? WHERE id=?", (hash_password(new_password), row["user_id"]))
+            connection.execute("UPDATE auth_reset_tokens SET used_at=? WHERE token_hash=?", (time.time(), token_hash))
+        return True
+
+    def set_role(self, user_id: str, role: str) -> bool:
+        with self.database.connect() as connection:
+            result = connection.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+        return result.rowcount == 1
+
+    def delete_user(self, user_id: str) -> bool:
+        with self.database.connect() as connection:
+            result = connection.execute("DELETE FROM users WHERE id=? AND username <> 'admin'", (user_id,))
+        return result.rowcount == 1
 
     def authenticate(self, username: str, password: str) -> dict[str, Any] | None:
         with self.database.connect() as connection:
@@ -196,13 +268,13 @@ class UserRepository:
     def list_poems(self, user_id: str) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT p.id,p.job_id,p.candidate_ordinal,p.title,p.content,p.work_type,p.meter_type,p.form_name,p.created_at,p.evaluation_json,EXISTS(SELECT 1 FROM poem_favorites f WHERE f.poem_id=p.id AND f.user_id=?) AS favorite FROM poems p WHERE p.user_id = ? ORDER BY p.created_at DESC",
+                "SELECT p.id,p.job_id,p.candidate_ordinal,p.title,p.content,p.work_type,p.meter_type,p.form_name,p.created_at,p.evaluation_json,p.is_public,EXISTS(SELECT 1 FROM poem_favorites f WHERE f.poem_id=p.id AND f.user_id=?) AS favorite,u.id AS author_id,u.username AS author_username,u.display_name AS author_display_name FROM poems p JOIN users u ON u.id=p.user_id WHERE p.user_id = ? ORDER BY p.created_at DESC",
                 (user_id, user_id),
             ).fetchall()
         return [self._poem_row(row) for row in rows]
 
     def update_poem(self, poem_id: str, user_id: str, fields: dict[str, Any]) -> bool:
-        allowed = {key: fields[key] for key in ("title", "content", "work_type", "meter_type", "form_name") if key in fields}
+        allowed = {key: fields[key] for key in ("title", "content", "work_type", "meter_type", "form_name", "is_public") if key in fields}
         if not allowed: return False
         assignments = ",".join(f"{key}=?" for key in allowed)
         with self.database.connect() as connection:
@@ -216,7 +288,7 @@ class UserRepository:
 
     def list_favorite_poems(self, user_id: str) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
-            rows = connection.execute("SELECT p.id,p.job_id,p.candidate_ordinal,p.title,p.content,p.work_type,p.meter_type,p.form_name,p.created_at,p.evaluation_json,1 AS favorite FROM poems p JOIN poem_favorites f ON f.poem_id=p.id WHERE f.user_id=? ORDER BY f.created_at DESC", (user_id,)).fetchall()
+            rows = connection.execute("SELECT p.id,p.job_id,p.candidate_ordinal,p.title,p.content,p.work_type,p.meter_type,p.form_name,p.created_at,p.evaluation_json,p.is_public,1 AS favorite,u.id AS author_id,u.username AS author_username,u.display_name AS author_display_name FROM poems p JOIN poem_favorites f ON f.poem_id=p.id JOIN users u ON u.id=p.user_id WHERE f.user_id=? ORDER BY f.created_at DESC", (user_id,)).fetchall()
         return [self._poem_row(row) for row in rows]
 
     @staticmethod
@@ -234,17 +306,6 @@ class UserRepository:
         with self.database.connect() as connection:
             result = connection.execute("UPDATE conversations SET deleted_at=NULL, updated_at=? WHERE id=? AND user_id=?", (time.time(), conversation_id, user_id))
         return result.rowcount == 1
-
-    def purge_conversation(self, conversation_id: str, user_id: str) -> bool:
-        with self.database.connect() as connection:
-            result = connection.execute("DELETE FROM conversations WHERE id=? AND user_id=?", (conversation_id, user_id))
-        return result.rowcount == 1
-
-    def purge_expired_conversations(self, *, older_than: float | None = None) -> int:
-        threshold = older_than if older_than is not None else time.time() - 30 * 86400
-        with self.database.connect() as connection:
-            result = connection.execute("DELETE FROM conversations WHERE deleted_at IS NOT NULL AND deleted_at < ?", (threshold,))
-        return result.rowcount
 
     def rename_conversation(self, conversation_id: str, user_id: str, title: str) -> bool:
         with self.database.connect() as connection:
@@ -279,6 +340,12 @@ class UserRepository:
             rows = connection.execute("SELECT c.id,c.name,c.created_at,c.updated_at,COUNT(i.poem_id) AS count FROM poem_collections c LEFT JOIN poem_collection_items i ON i.collection_id=c.id WHERE c.user_id=? GROUP BY c.id ORDER BY c.updated_at DESC", (user_id,)).fetchall()
         return [dict(row) for row in rows]
 
+    def list_collection_items(self, collection_id: str, user_id: str) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute("""SELECT p.id,p.job_id,p.candidate_ordinal,p.title,p.content,p.work_type,p.meter_type,p.form_name,p.created_at,p.evaluation_json,p.is_public,EXISTS(SELECT 1 FROM poem_favorites f WHERE f.poem_id=p.id AND f.user_id=?) AS favorite,u.id AS author_id,u.username AS author_username,u.display_name AS author_display_name
+                FROM poem_collection_items i JOIN poem_collections c ON c.id=i.collection_id JOIN poems p ON p.id=i.poem_id JOIN users u ON u.id=p.user_id WHERE i.collection_id=? AND c.user_id=? ORDER BY i.created_at DESC""", (user_id, collection_id, user_id)).fetchall()
+        return [self._poem_row(row) for row in rows]
+
     def create_poem_collection(self, user_id: str, name: str) -> dict[str, Any]:
         now = time.time(); collection_id = str(uuid.uuid4())
         with self.database.connect() as connection:
@@ -297,8 +364,8 @@ class UserRepository:
 
     def set_favorite(self, user_id: str, poem_id: str, favorite: bool) -> bool:
         with self.database.connect() as connection:
-            owned = connection.execute("SELECT 1 FROM poems WHERE id=? AND user_id=?", (poem_id, user_id)).fetchone()
-            if owned is None: return False
+            exists = connection.execute("SELECT 1 FROM poems WHERE id=?", (poem_id,)).fetchone()
+            if exists is None: return False
             if favorite:
                 connection.execute("INSERT OR IGNORE INTO poem_favorites(user_id,poem_id,created_at) VALUES (?,?,?)", (user_id, poem_id, time.time()))
             else:
@@ -308,7 +375,7 @@ class UserRepository:
     def collection_item(self, collection_id: str, poem_id: str, user_id: str, add: bool) -> bool:
         with self.database.connect() as connection:
             owned = connection.execute("SELECT 1 FROM poem_collections WHERE id=? AND user_id=?", (collection_id, user_id)).fetchone()
-            poem = connection.execute("SELECT 1 FROM poems WHERE id=? AND user_id=?", (poem_id, user_id)).fetchone()
+            poem = connection.execute("SELECT 1 FROM poems WHERE id=?", (poem_id,)).fetchone()
             if owned is None or poem is None: return False
             if add:
                 connection.execute("INSERT OR IGNORE INTO poem_collection_items(collection_id,poem_id,created_at) VALUES (?,?,?)", (collection_id, poem_id, time.time()))

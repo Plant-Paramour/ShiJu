@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 
 from ..auth import auth_secret, bearer_token, decode_token, issue_token
-from ..schemas import LoginModel, ChangePasswordModel
+from ..schemas import ChangePasswordModel, LoginModel, PasswordResetConfirmModel, PasswordResetRequestModel, RegisterModel
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
 
@@ -25,6 +25,31 @@ def login(body: LoginModel, request: Request, response: Response):
     token = issue_token(user["id"], user["username"], request.app.state.settings.auth_secret)
     response.set_cookie("shiju_token", token, httponly=True, samesite="lax", max_age=7 * 86400)
     return {"token": token, "user": user}
+
+
+@router.post("/register", status_code=201)
+def register(body: RegisterModel, request: Request, response: Response):
+    try:
+        user = request.app.state.users.register(body.username, body.password, body.display_name)
+    except Exception as exc:
+        raise HTTPException(status_code=409, detail="用户名已存在") from exc
+    token = issue_token(user["id"], user["username"], request.app.state.settings.auth_secret)
+    response.set_cookie("shiju_token", token, httponly=True, samesite="lax", max_age=7 * 86400)
+    return {"token": token, "user": user}
+
+
+@router.post("/password-reset/request")
+def request_password_reset(body: PasswordResetRequestModel, request: Request):
+    token = request.app.state.users.create_reset_token(body.username)
+    # 开发环境不接邮件，返回一次性令牌以便本地闭环和测试。
+    return {"status": "accepted", "reset_token": token}
+
+
+@router.post("/password-reset/confirm")
+def confirm_password_reset(body: PasswordResetConfirmModel, request: Request):
+    if not request.app.state.users.reset_password(body.token, body.new_password):
+        raise HTTPException(status_code=400, detail="重置链接无效或已过期")
+    return {"status": "updated"}
 
 
 @router.post("/logout", status_code=204)

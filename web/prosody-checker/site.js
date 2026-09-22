@@ -5,7 +5,12 @@ const routeTitles = {
   chat: "AI 对话 · 诗矩",
   prosody: "格律检测 · 诗矩",
   forum: "诗友论坛 · 诗矩",
+  "forum-thread": "主题讨论 · 诗矩",
+  "forum-compose": "发布话题 · 诗矩",
+  notifications: "通知中心 · 诗矩",
+  "public-profile": "用户主页 · 诗矩",
   profile: "个人中心 · 诗矩",
+  admin: "管理后台 · 诗矩",
 };
 
 const views = new Map(
@@ -14,6 +19,9 @@ const views = new Map(
 const navLinks = [...document.querySelectorAll(".site-nav [data-route-link]")];
 const navToggle = document.querySelector(".nav-toggle");
 const siteNav = document.querySelector(".site-nav");
+const drawerBackdrop = document.querySelector("#drawer-backdrop");
+const leftDrawer = document.querySelector("#site-left-drawer");
+const rightDrawer = document.querySelector("#site-right-drawer");
 const mainContent = document.querySelector("#main-content");
 const siteStatus = document.querySelector("#site-status");
 let statusTimer;
@@ -38,10 +46,37 @@ function announce(message) {
 function closeNavigation() {
   navToggle.setAttribute("aria-expanded", "false");
   siteNav.classList.remove("is-open");
+  closeDrawers();
+}
+
+function closeDrawers() {
+  for (const drawer of [leftDrawer, rightDrawer]) {
+    drawer?.classList.remove("is-open");
+    drawer?.setAttribute("aria-hidden", "true");
+  }
+  drawerBackdrop?.classList.remove("is-visible");
+  if (drawerBackdrop) drawerBackdrop.hidden = true;
+  navToggle?.setAttribute("aria-expanded", "false");
+  document.body.classList.remove("has-open-drawer");
+}
+
+function openDrawer(drawer) {
+  if (!drawer) return;
+  closeDrawers();
+  drawer.classList.add("is-open");
+  drawer.setAttribute("aria-hidden", "false");
+  if (drawer === leftDrawer) navToggle?.setAttribute("aria-expanded", "true");
+  document.body.classList.add("has-open-drawer");
+  if (drawerBackdrop) {
+    drawerBackdrop.hidden = false;
+    requestAnimationFrame(() => drawerBackdrop.classList.add("is-visible"));
+  }
+  drawer.querySelector("[data-drawer-close]")?.focus();
 }
 
 function showRoute(route, options = {}) {
-  const resolvedRoute = views.has(route) ? route : "home";
+  const resolvedRoute = route === "home" && currentUser ? "chat" : (views.has(route) ? route : "home");
+  if (route === "home" && currentUser && window.location.hash !== "#chat") window.history.replaceState(null, "", "#chat");
   for (const [name, view] of views) view.hidden = name !== resolvedRoute;
   for (const link of navLinks) {
     const isCurrent = link.dataset.routeLink === resolvedRoute;
@@ -54,29 +89,72 @@ function showRoute(route, options = {}) {
   if (options.scroll !== false) window.scrollTo({ top: 0, behavior: "auto" });
   if (options.focus) mainContent.focus({ preventScroll: true });
   if (resolvedRoute === "profile" && currentUser) loadProfileData();
+  if (resolvedRoute === "forum") loadForumData();
+  if (resolvedRoute === "forum-thread") loadThreadPage();
+  if (resolvedRoute === "forum-compose") loadComposePage();
+  if (resolvedRoute === "notifications") loadNotifications();
+  if (resolvedRoute === "public-profile") loadPublicProfile();
+  if (resolvedRoute === "admin") loadAdminData();
   if (!prosodyInspector.hidden) closeProsodyInspector();
 }
 
 function routeFromHash() {
-  return window.location.hash.slice(1).split("/")[0] || "home";
+  const parts = window.location.hash.slice(1).split("/");
+  if (parts[0] === "forum" && parts[1] === "thread") return "forum-thread";
+  if (parts[0] === "forum" && parts[1] === "compose") return "forum-compose";
+  if (parts[0] === "user" && parts[1]) return "public-profile";
+  return parts[0] || "home";
 }
 
 navToggle.addEventListener("click", () => {
-  const open = navToggle.getAttribute("aria-expanded") !== "true";
-  navToggle.setAttribute("aria-expanded", String(open));
-  siteNav.classList.toggle("is-open", open);
+  const open = leftDrawer.classList.contains("is-open");
+  if (open) closeDrawers();
+  else openDrawer(leftDrawer);
 });
 
-document.querySelector(".site-header").addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && navToggle.getAttribute("aria-expanded") === "true") {
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && (navToggle.getAttribute("aria-expanded") === "true" || leftDrawer.classList.contains("is-open") || rightDrawer.classList.contains("is-open"))) {
     closeNavigation();
-    navToggle.focus();
   }
 });
 
 siteNav.addEventListener("click", (event) => {
   if (event.target.closest("a")) closeNavigation();
 });
+
+document.querySelectorAll("[data-drawer-close]").forEach((button) => button.addEventListener("click", closeDrawers));
+drawerBackdrop?.addEventListener("click", closeDrawers);
+document.querySelectorAll("[data-drawer-route]").forEach((link) => link.addEventListener("click", () => closeDrawers()));
+
+document.querySelector("#login-button").addEventListener("click", () => {
+  if (currentUser) {
+    loadDrawerNotifications();
+    openDrawer(rightDrawer);
+    return;
+  }
+  openDrawer(rightDrawer);
+});
+
+document.querySelectorAll("[data-profile-drawer-tab]").forEach((button) => {
+  button.addEventListener("click", () => {
+    if (!currentUser) {
+      closeDrawers();
+      requireLogin();
+      return;
+    }
+    const tab = button.dataset.profileDrawerTab;
+    document.querySelectorAll("[data-profile-tab]").forEach((item) => item.classList.toggle("is-active", item.dataset.profileTab === tab));
+    document.querySelectorAll("[data-profile-panel]").forEach((panel) => { panel.hidden = panel.dataset.profilePanel !== tab; });
+    closeDrawers();
+    window.location.hash = "profile";
+  });
+});
+document.querySelector("#drawer-login-action")?.addEventListener("click", () => {
+  closeDrawers();
+  document.querySelector("#login-dialog").showModal();
+  document.querySelector("#login-username").focus();
+});
+document.querySelector("#drawer-logout-action")?.addEventListener("click", () => { closeDrawers(); logout(); });
 
 window.addEventListener("hashchange", () => {
   if (window.location.hash === "#main-content") return;
@@ -85,6 +163,7 @@ window.addEventListener("hashchange", () => {
 
 document.querySelectorAll("[data-open-register]").forEach((button) => {
   button.addEventListener("click", () => {
+    if (document.querySelector("#login-dialog").open) document.querySelector("#login-dialog").close();
     if (window.location.hash !== "#home") window.location.hash = "home";
     showRoute("home", { scroll: false });
     document.querySelector("#register").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -99,8 +178,7 @@ document.querySelectorAll("[data-demo-action]").forEach((button) => {
       document.querySelector("#login-username").focus();
       return;
     }
-    const labels = { publish: "发帖功能将在后续接入。" };
-    announce(labels[button.dataset.demoAction] ?? "此功能目前仅作样式展示。");
+    if (button.dataset.demoAction === "publish") openThreadDialog();
   });
 });
 
@@ -115,6 +193,7 @@ document.querySelector("#login-form").addEventListener("submit", async (event) =
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ username: document.querySelector("#login-username").value.trim(), password: document.querySelector("#login-password").value }),
     });
+    authGeneration++;
     authToken = payload.token;
     currentUser = payload.user;
     localStorage.setItem("shiju_token", authToken);
@@ -123,33 +202,124 @@ document.querySelector("#login-form").addEventListener("submit", async (event) =
     status.textContent = "";
     await loadConversations({ restore: true });
     await loadProfileData();
+    if (routeFromHash() === "home") window.location.hash = "chat";
     announce(`欢迎回来，${currentUser.display_name}`);
   } catch (error) { status.textContent = error.message; }
 });
-document.querySelector("#logout-button").addEventListener("click", async () => {
+async function logout() {
+  const buttons = [document.querySelector("#logout-button"), document.querySelector("#profile-logout-button")].filter(Boolean);
+  buttons.forEach((button) => { button.disabled = true; });
   try { await apiFetch("/v1/auth/logout", { method: "POST" }); } catch { /* local token is still cleared */ }
   clearJobProgressPolls();
   clearConversationRefresh();
-  authToken = ""; currentUser = null; currentConversationId = null;
-  localStorage.removeItem("shiju_token"); updateAuthUi(); announce("已退出登录。");
-});
+  authToken = ""; currentUser = null; currentConversationId = null; chatSessionId = null; profilePoems = []; profileCollections = [];
+  localStorage.removeItem("shiju_token"); resetAuthenticatedUi(); updateAuthUi(); window.location.hash = "home"; announce("已退出登录。");
+  buttons.forEach((button) => { button.disabled = false; });
+}
+
+document.querySelector("#logout-button").addEventListener("click", logout);
 
 const registerForm = document.querySelector("#register-form");
 const registerPhone = document.querySelector("#register-phone");
+const registerPassword = document.querySelector("#register-password");
 const registerStatus = document.querySelector("#register-status");
 
-document.querySelector("#send-code").addEventListener("click", () => {
-  if (!registerPhone.value.trim()) {
-    registerStatus.textContent = "请先输入手机号。";
-    registerPhone.focus();
-    return;
-  }
-  registerStatus.textContent = "样式演示：当前不会发送真实验证码。";
+registerForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  registerStatus.textContent = "注册中……";
+  try {
+    const payload = await apiFetch("/v1/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: registerPhone.value.trim(), password: registerPassword.value }) });
+    authGeneration++; authToken = payload.token; currentUser = payload.user; localStorage.setItem("shiju_token", authToken); updateAuthUi(); await loadProfileData(); registerStatus.textContent = "注册成功"; window.location.hash = "chat"; announce(`欢迎加入，${currentUser.display_name}`);
+  } catch (error) { registerStatus.textContent = error.message; }
 });
 
-registerForm.addEventListener("submit", (event) => {
+document.querySelector("#profile-logout-button")?.addEventListener("click", logout);
+
+const avatarCropDialog = document.querySelector("#avatar-crop-dialog");
+const avatarCropForm = document.querySelector("#avatar-crop-form");
+const avatarCropCanvas = document.querySelector("#avatar-crop-canvas");
+const avatarCropZoom = document.querySelector("#avatar-crop-zoom");
+const avatarCropZoomValue = document.querySelector("#avatar-crop-zoom-value");
+const avatarCropImage = new Image();
+const avatarCropState = { objectUrl: "", file: null, centerX: 0, centerY: 0, pointerId: null, lastX: 0, lastY: 0 };
+
+function avatarCropBounds() {
+  const zoom = Number(avatarCropZoom.value) || 1;
+  const sourceSize = Math.min(avatarCropImage.naturalWidth, avatarCropImage.naturalHeight) / zoom;
+  return {
+    zoom,
+    sourceSize,
+    minX: sourceSize / 2,
+    maxX: avatarCropImage.naturalWidth - sourceSize / 2,
+    minY: sourceSize / 2,
+    maxY: avatarCropImage.naturalHeight - sourceSize / 2,
+  };
+}
+
+function clampAvatarCropCenter() {
+  const bounds = avatarCropBounds();
+  avatarCropState.centerX = Math.min(bounds.maxX, Math.max(bounds.minX, avatarCropState.centerX || avatarCropImage.naturalWidth / 2));
+  avatarCropState.centerY = Math.min(bounds.maxY, Math.max(bounds.minY, avatarCropState.centerY || avatarCropImage.naturalHeight / 2));
+}
+
+function drawAvatarCrop() {
+  if (!avatarCropImage.naturalWidth) return;
+  clampAvatarCropCenter();
+  const { sourceSize } = avatarCropBounds();
+  const context = avatarCropCanvas.getContext("2d");
+  context.clearRect(0, 0, avatarCropCanvas.width, avatarCropCanvas.height);
+  context.imageSmoothingQuality = "high";
+  context.drawImage(avatarCropImage, avatarCropState.centerX - sourceSize / 2, avatarCropState.centerY - sourceSize / 2, sourceSize, sourceSize, 0, 0, avatarCropCanvas.width, avatarCropCanvas.height);
+  avatarCropZoomValue.textContent = `${Math.round(Number(avatarCropZoom.value) * 100)}%`;
+}
+
+function closeAvatarCrop() {
+  if (avatarCropDialog.open) avatarCropDialog.close();
+  if (avatarCropState.objectUrl) URL.revokeObjectURL(avatarCropState.objectUrl);
+  avatarCropState.objectUrl = ""; avatarCropState.file = null; avatarCropImage.removeAttribute("src");
+}
+
+document.querySelector("#profile-avatar-input")?.addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  const status = document.querySelector("#profile-status");
+  if (!file) return;
+  if (![/^image\/jpeg$/, /^image\/png$/, /^image\/webp$/].some((pattern) => pattern.test(file.type)) || file.size > 2 * 1024 * 1024) {
+    status.textContent = "请选择 2MB 以内的 JPG、PNG 或 WebP 图片。"; event.target.value = ""; return;
+  }
+  closeAvatarCrop();
+  avatarCropState.file = file;
+  avatarCropState.objectUrl = URL.createObjectURL(file);
+  avatarCropImage.onload = () => { avatarCropState.centerX = avatarCropImage.naturalWidth / 2; avatarCropState.centerY = avatarCropImage.naturalHeight / 2; avatarCropZoom.value = "1"; drawAvatarCrop(); avatarCropDialog.showModal(); };
+  avatarCropImage.onerror = () => { status.textContent = "图片无法读取，请重新选择。"; closeAvatarCrop(); };
+  avatarCropImage.src = avatarCropState.objectUrl;
+  event.target.value = "";
+});
+
+avatarCropZoom?.addEventListener("input", drawAvatarCrop);
+avatarCropCanvas?.addEventListener("pointerdown", (event) => { avatarCropState.pointerId = event.pointerId; avatarCropState.lastX = event.clientX; avatarCropState.lastY = event.clientY; avatarCropCanvas.setPointerCapture(event.pointerId); });
+avatarCropCanvas?.addEventListener("pointermove", (event) => {
+  if (avatarCropState.pointerId !== event.pointerId) return;
+  const bounds = avatarCropBounds(); const rect = avatarCropCanvas.getBoundingClientRect();
+  avatarCropState.centerX -= (event.clientX - avatarCropState.lastX) * bounds.sourceSize / rect.width;
+  avatarCropState.centerY -= (event.clientY - avatarCropState.lastY) * bounds.sourceSize / rect.height;
+  avatarCropState.lastX = event.clientX; avatarCropState.lastY = event.clientY; drawAvatarCrop();
+});
+avatarCropCanvas?.addEventListener("pointerup", (event) => { if (avatarCropState.pointerId === event.pointerId) avatarCropState.pointerId = null; });
+avatarCropCanvas?.addEventListener("pointercancel", () => { avatarCropState.pointerId = null; });
+document.querySelector("#avatar-crop-close")?.addEventListener("click", closeAvatarCrop);
+document.querySelector("#avatar-crop-cancel")?.addEventListener("click", closeAvatarCrop);
+avatarCropDialog?.addEventListener("cancel", closeAvatarCrop);
+avatarCropForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  registerStatus.textContent = "注册流程尚未接入，当前仅展示表单样式。";
+  if (!avatarCropState.file || !avatarCropImage.naturalWidth) return;
+  const status = document.querySelector("#profile-status"); const confirm = document.querySelector("#avatar-crop-confirm");
+  confirm.disabled = true; status.textContent = "头像上传中……";
+  try {
+    const blob = await new Promise((resolve, reject) => avatarCropCanvas.toBlob((value) => value ? resolve(value) : reject(new Error("裁剪失败，请重试。")), "image/jpeg", 0.9));
+    currentUser = await apiFetch("/v1/profile/me/avatar", { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: blob });
+    closeAvatarCrop(); updateAuthUi(); status.textContent = "头像已更新。"; announce("头像已更新");
+  } catch (error) { status.textContent = error.message; }
+  finally { confirm.disabled = false; }
 });
 
 const chatForm = document.querySelector("#chat-form");
@@ -164,21 +334,25 @@ let chatBusy = false;
 const activeJobPolls = new Map();
 let conversationRefreshTimer = null;
 let conversationLoadVersion = 0;
+let authGeneration = 0;
 let activeConversationEvents = null;
 
 async function loadConversations({ restore = false } = {}) {
-  if (!currentUser) return;
+  if (!currentUser) { document.querySelector("#conversation-list").innerHTML = "<p>登录后查看历史对话</p>"; return; }
+  const generation = authGeneration;
   try {
     const payload = await apiFetch("/v1/conversations");
+    if (generation !== authGeneration) return;
     const list = document.querySelector("#conversation-list");
     list.innerHTML = "";
     if (!payload.items.length) { list.innerHTML = "<p>还没有历史对话</p>"; return; }
     const heading = document.createElement("p"); heading.textContent = "历史对话"; list.append(heading);
     payload.items.forEach((item) => {
-      const button = document.createElement("button");
-      button.type = "button"; button.textContent = item.title || "新建对话"; button.dataset.conversationId = item.id;
+      const row = document.createElement("div"); row.className = "conversation-row";
+      const button = document.createElement("button"); button.type = "button"; button.textContent = item.title || "新建对话"; button.dataset.conversationId = item.id;
       if (item.id === currentConversationId) button.setAttribute("aria-current", "true");
-      list.append(button);
+      const archive = document.createElement("button"); archive.type = "button"; archive.className = "conversation-archive"; archive.dataset.archiveConversation = item.id; archive.title = "归档对话"; archive.setAttribute("aria-label", `归档对话：${item.title || "新建对话"}`); archive.textContent = "归档";
+      row.append(button, archive); list.append(row);
     });
     if (restore) {
       const savedId = localStorage.getItem(`shiju_conversation_${currentUser.id}`);
@@ -192,7 +366,7 @@ async function openConversation(conversationId) {
   if (!requireLogin()) return;
   const loadVersion = ++conversationLoadVersion;
   const payload = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}`);
-  if (loadVersion !== conversationLoadVersion) return;
+  if (loadVersion !== conversationLoadVersion || !currentUser) return;
   clearJobProgressPolls();
   if (activeConversationEvents) activeConversationEvents.abort();
   clearConversationRefresh();
@@ -203,7 +377,7 @@ async function openConversation(conversationId) {
   const jobs = await loadConversationJobs(payload);
   if (loadVersion !== conversationLoadVersion) return;
   jobs.forEach((job) => startJobProgress(job.job_id, job));
-  document.querySelectorAll("#conversation-list button").forEach((button) => button.toggleAttribute("aria-current", button.dataset.conversationId === payload.id));
+  document.querySelectorAll("#conversation-list button[data-conversation-id]").forEach((button) => button.toggleAttribute("aria-current", button.dataset.conversationId === payload.id));
   agentStatus.textContent = "已连接";
   if (payload.messages.some((message) => message.status === "pending")) {
     scheduleConversationRefresh(payload.id);
@@ -287,6 +461,8 @@ async function refreshConversationMessages(conversationId) {
 }
 
 let profilePoems = [];
+let ownedPoems = [];
+let favoritePoems = [];
 let profileCollections = [];
 
 function parsePoemFields(poem) {
@@ -312,6 +488,46 @@ function isSongCi(poem) {
     .filter(Boolean)
     .some((value) => /宋词|词牌|词$/.test(String(value)));
 }
+
+function isTangPoem(poem) {
+  return [poem.work_type, poem.meter_type, poem.form_name]
+    .filter(Boolean)
+    .some((value) => /唐诗|律诗|绝句|排律|五言|七言/.test(String(value)));
+}
+
+const poemTextMeasurer = document.createElement("canvas").getContext("2d");
+
+function updatePoemLayout(article) {
+  const verses = article.querySelector(".poem-handscroll__verses");
+  const lines = [...article.querySelectorAll(".poem-handscroll__line")];
+  if (!verses || !lines.length || !verses.clientWidth) return;
+  const versesStyle = getComputedStyle(verses);
+  const lineStyle = getComputedStyle(lines[0]);
+  poemTextMeasurer.font = lineStyle.font;
+  const lineWidths = lines.map((line) => poemTextMeasurer.measureText(line.textContent).width);
+  const horizontalNaturalWidth = Math.max(...[...article.querySelectorAll(".poem-handscroll__stanza")].map((stanza) => {
+    const stanzaWidths = [...stanza.querySelectorAll(".poem-handscroll__line")]
+      .map((line) => poemTextMeasurer.measureText(line.textContent).width);
+    if (!article.classList.contains("poem-handscroll--tang")) return Math.max(...stanzaWidths);
+    let widestRow = 0;
+    for (let index = 0; index < stanzaWidths.length; index += 2) {
+      widestRow = Math.max(widestRow, (stanzaWidths[index] || 0) + (stanzaWidths[index + 1] || 0));
+    }
+    return widestRow;
+  }));
+  const horizontalWidth = Math.min(article.parentElement?.clientWidth || 855, 855);
+  const horizontalWidthRatio = horizontalNaturalWidth / horizontalWidth;
+  const vertical = horizontalWidthRatio > 2 / 3;
+  article.classList.toggle("poem-handscroll--vertical", vertical);
+
+  const contentWidth = verses.clientWidth - parseFloat(versesStyle.paddingLeft) - parseFloat(versesStyle.paddingRight);
+  const widestLine = Math.max(...lineWidths);
+  article.classList.toggle("poem-handscroll--paired", !vertical && article.classList.contains("poem-handscroll--tang") && widestLine * 2 <= contentWidth);
+}
+
+const poemLayoutObserver = typeof ResizeObserver === "function"
+  ? new ResizeObserver((entries) => entries.forEach(({ target }) => updatePoemLayout(target)))
+  : null;
 
 function scoreText(value) {
   const number = Number(value);
@@ -419,10 +635,12 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !prosodyInspector.hidden) closeProsodyInspector();
 });
 
-function createPoemHandscroll(poem, { resultLabel = "", showTime = false, evaluationPending = false } = {}) {
+function createPoemHandscroll(poem, { resultLabel = "", showTime = false, evaluationPending = false, shareable = true } = {}) {
   const value = parsePoemFields(poem);
   const article = document.createElement("article");
-  article.className = `poem-handscroll${isSongCi(value) ? " poem-handscroll--ci" : ""}`;
+  const stanzas = poemStanzas(value.content);
+  const songCi = isSongCi(value);
+  article.className = `poem-handscroll${songCi ? " poem-handscroll--ci" : isTangPoem(value) ? " poem-handscroll--tang" : " poem-handscroll--single-column"}`;
 
   const leftRoller = document.createElement("span");
   leftRoller.className = "poem-handscroll__roller poem-handscroll__roller--left";
@@ -443,11 +661,15 @@ function createPoemHandscroll(poem, { resultLabel = "", showTime = false, evalua
   seal.className = "poem-handscroll__seal";
   seal.setAttribute("aria-hidden", "true");
   seal.textContent = "诗矩";
-  heading.append(kind, title, seal);
-
   const evaluation = value.evaluation;
   const scorePanel = document.createElement("div");
   scorePanel.className = "poem-score";
+  const scoreTop = document.createElement("div"); scoreTop.className = "poem-score__top";
+  const inspect = document.createElement("button");
+  inspect.type = "button"; inspect.className = "poem-score__inspect";
+  inspect.textContent = evaluation ? "格律评分" : (evaluationPending ? "评分中" : "暂无评分");
+  inspect.disabled = !evaluation;
+  if (evaluation) inspect.addEventListener("click", () => openProsodyInspector(evaluation, value.title));
   if (evaluation) {
     const scoreBook = document.createElement("span");
     scoreBook.className = "poem-score__book";
@@ -459,15 +681,14 @@ function createPoemHandscroll(poem, { resultLabel = "", showTime = false, evalua
       const description = document.createElement("dd"); description.textContent = scoreText(score);
       group.append(term, description); scoreGrid.append(group);
     });
-    scorePanel.append(scoreBook, scoreGrid);
+    scoreTop.append(inspect, scoreBook); scorePanel.append(scoreTop, scoreGrid);
   } else {
     scorePanel.classList.add("poem-score--pending");
-    scorePanel.textContent = evaluationPending ? "格律评分中" : "暂无评分";
+    scoreTop.append(inspect); scorePanel.append(scoreTop);
   }
 
   const verses = document.createElement("div");
   verses.className = "poem-handscroll__verses";
-  const stanzas = poemStanzas(value.content);
   (stanzas.length ? stanzas : [["正文尚未生成"]]).forEach((lines) => {
     const stanza = document.createElement("p");
     stanza.className = "poem-handscroll__stanza";
@@ -479,16 +700,12 @@ function createPoemHandscroll(poem, { resultLabel = "", showTime = false, evalua
     });
     verses.append(stanza);
   });
-  paper.append(heading, scorePanel, verses);
+  paper.append(heading, verses);
 
   const scoreFooter = document.createElement("footer");
   scoreFooter.className = "poem-handscroll__footer poem-handscroll__footer--score";
-  const inspect = document.createElement("button");
-  inspect.type = "button";
-  inspect.className = "poem-score__inspect";
-  inspect.textContent = evaluation ? "格律评分" : (evaluationPending ? "评分中" : "暂无评分");
-  inspect.disabled = !evaluation;
-  if (evaluation) inspect.addEventListener("click", () => openProsodyInspector(evaluation, value.title));
+  const footerActions = document.createElement("div");
+  footerActions.className = "poem-handscroll__footer-actions";
   const flags = document.createElement("div");
   flags.className = "poem-score__flags";
   const violations = evaluation ? violationMessages(evaluation.result) : [];
@@ -501,17 +718,35 @@ function createPoemHandscroll(poem, { resultLabel = "", showTime = false, evalua
     (messages || []).forEach((message) => { const line = document.createElement("span"); line.textContent = message; tooltip.append(line); });
     flag.append(tooltip); flags.append(flag);
   });
-  scoreFooter.append(inspect, flags);
-  paper.append(scoreFooter);
+  heading.append(seal, kind, scorePanel, title);
+  if (shareable) {
+    const share = document.createElement("button");
+    share.type = "button"; share.className = "poem-score__inspect"; share.textContent = "分享诗作";
+    share.addEventListener("click", async () => {
+      let poemId = value.id || "";
+      if (!poemId && currentUser) {
+        await loadPoems();
+        poemId = profilePoems.find((poem) => parsePoemFields(poem).title === value.title && parsePoemFields(poem).content === value.content)?.id || "";
+      }
+      sessionStorage.setItem("shiju_share_poem", JSON.stringify({ id: poemId, title: value.title, content: value.content, work_type: value.work_type, form_name: value.form_name }));
+      window.location.hash = "forum/compose";
+    });
+    footerActions.append(share);
+  }
 
   if (showTime && value.created_at) {
     const time = document.createElement("time");
     time.dateTime = new Date(value.created_at * 1000).toISOString();
-    time.textContent = new Date(value.created_at * 1000).toLocaleString("zh-CN");
-    scoreFooter.prepend(time);
+    time.textContent = `创建于 ${new Date(value.created_at * 1000).toLocaleString("zh-CN")}`;
+    scoreFooter.append(time);
   }
+  scoreFooter.append(footerActions);
+  scoreFooter.append(flags);
+  paper.append(scoreFooter);
 
   article.append(leftRoller, paper, rightRoller);
+  poemLayoutObserver?.observe(article);
+  requestAnimationFrame(() => updatePoemLayout(article));
   return article;
 }
 
@@ -522,15 +757,11 @@ function poemCard(poem) {
   const actions = document.createElement("div"); actions.className = "poem-card__actions";
   const favorite = document.createElement("button"); favorite.type = "button"; favorite.dataset.poemAction = "favorite"; favorite.title = value.favorite ? "取消收藏" : "收藏"; favorite.setAttribute("aria-label", favorite.title); favorite.textContent = value.favorite ? "★" : "☆";
   const collect = document.createElement("button"); collect.type = "button"; collect.dataset.poemAction = "collect"; collect.textContent = "加入合集";
+  const publish = document.createElement("button"); publish.type = "button"; publish.dataset.poemAction = "public"; publish.textContent = value.is_public ? "取消公开" : "公开诗作";
   const remove = document.createElement("button"); remove.type = "button"; remove.dataset.poemAction = "delete"; remove.textContent = "删除";
-  actions.append(favorite, collect, remove);
-  let footer = article.querySelector(".poem-handscroll__footer");
-  if (!footer) {
-    footer = document.createElement("footer");
-    footer.className = "poem-handscroll__footer";
-    article.querySelector(".poem-handscroll__paper").append(footer);
-  }
-  footer.append(actions);
+  actions.append(favorite, collect);
+  if (value.author_id === currentUser?.id) actions.append(publish, remove);
+  article.querySelector(".poem-handscroll__footer-actions").append(actions);
   return article;
 }
 
@@ -542,12 +773,17 @@ function renderPoemList(container, poems, emptyText) {
 
 async function loadPoems() {
   if (!currentUser) return;
-  const payload = await apiFetch("/v1/profile/poems"); profilePoems = payload.items || [];
+  const generation = authGeneration;
+  const [ownedPayload, favoritePayload] = await Promise.all([apiFetch("/v1/profile/poems"), apiFetch("/v1/profile/poems?favorite=true")]);
+  if (generation !== authGeneration) return;
+  ownedPoems = ownedPayload.items || [];
+  favoritePoems = favoritePayload.items || [];
+  const merged = new Map(); [...ownedPoems, ...favoritePoems].forEach((poem) => merged.set(poem.id, poem)); profilePoems = [...merged.values()];
   const type = document.querySelector("#profile-work-type")?.value || "";
-  renderPoemList(document.querySelector("#poem-list"), profilePoems.filter((poem) => !type || poem.work_type === type), "暂无诗作记录。完成一次格律生成后，作品会自动归档到这里。");
-  renderPoemList(document.querySelector("#favorite-list"), profilePoems.filter((poem) => poem.favorite), "还没有收藏作品。");
-  document.querySelector("#profile-poem-count").textContent = profilePoems.length;
-  document.querySelector("#profile-favorite-count").textContent = profilePoems.filter((poem) => poem.favorite).length;
+  renderPoemList(document.querySelector("#poem-list"), ownedPoems.filter((poem) => !type || poem.work_type === type), "暂无诗作记录。完成一次格律生成后，作品会自动归档到这里。");
+  renderPoemList(document.querySelector("#favorite-list"), favoritePoems, "还没有收藏作品。");
+  document.querySelector("#profile-poem-count").textContent = ownedPoems.length;
+  document.querySelector("#profile-favorite-count").textContent = favoritePoems.length;
   profilePoems.filter((poem) => !poem.evaluation && poem.job_id && poem.candidate_ordinal).forEach(async (poem) => {
     const key = `${poem.job_id}:${poem.candidate_ordinal}`;
     if (activeEvaluations.has(key) || failedEvaluations.has(key)) return;
@@ -564,10 +800,12 @@ async function loadPoems() {
 
 async function loadProfileData() {
   if (!currentUser) return;
+  const generation = authGeneration;
   try {
-    const [collections, folders, conversations] = await Promise.all([
-      apiFetch("/v1/profile/poem-collections"), apiFetch("/v1/conversation-folders"), apiFetch("/v1/conversations?include_deleted=true"), loadPoems(),
+    const [collections, conversations, following] = await Promise.all([
+      apiFetch("/v1/profile/poem-collections"), apiFetch("/v1/conversations?include_deleted=true"), apiFetch("/v1/forum/following"), loadPoems(),
     ]);
+    if (generation !== authGeneration) return;
     profileCollections = collections.items || [];
     const collectionList = document.querySelector("#collection-list"); collectionList.replaceChildren();
     if (!profileCollections.length) collectionList.innerHTML = '<p class="empty-state">还没有作品合集。</p>';
@@ -576,35 +814,18 @@ async function loadProfileData() {
       row.innerHTML = `<div><strong></strong><span></span></div><button type="button" data-collection-action="delete">删除</button>`;
       row.querySelector("strong").textContent = item.name; row.querySelector("span").textContent = `${item.count} 首作品`; collectionList.append(row);
     });
-    renderFolderManager(folders.items || [], (conversations.items || []).filter((item) => !item.deleted_at));
-    renderTrash((conversations.items || []).filter((item) => item.deleted_at));
+    renderArchive((conversations.items || []).filter((item) => item.deleted_at));
+    renderUserRows(document.querySelector("#following-list"), following.items || [], true);
   } catch (error) { announce(`个人中心加载失败：${error.message}`); }
 }
 
-function renderFolderManager(folders, conversations) {
-  const list = document.querySelector("#folder-list"); list.replaceChildren();
-  folders.forEach((folder) => {
-    const row = document.createElement("article"); row.className = "profile-row";
-    const count = conversations.filter((item) => item.folder_id === folder.id).length;
-    row.innerHTML = `<div><strong></strong><span></span></div>`; row.querySelector("strong").textContent = folder.name; row.querySelector("span").textContent = `${count} 个对话`; list.append(row);
-  });
-  conversations.forEach((conversation) => {
-    const row = document.createElement("article"); row.className = "profile-row profile-row--conversation"; row.dataset.conversationId = conversation.id;
-    const text = document.createElement("div"); const name = document.createElement("strong"); name.textContent = conversation.title; text.append(name);
-    const select = document.createElement("select"); select.dataset.conversationFolder = conversation.id; select.append(new Option("未分类", "")); folders.forEach((folder) => select.append(new Option(folder.name, folder.id))); select.value = conversation.folder_id || "";
-    const remove = document.createElement("button"); remove.type = "button"; remove.dataset.conversationAction = "delete"; remove.textContent = "移至回收站";
-    row.append(text, select, remove); list.append(row);
-  });
-  if (!list.children.length) list.innerHTML = '<p class="empty-state">还没有文件夹或对话。</p>';
-}
-
-function renderTrash(items) {
-  const list = document.querySelector("#trash-list"); list.replaceChildren();
-  if (!items.length) { list.innerHTML = '<p class="empty-state">回收站为空。</p>'; return; }
+function renderArchive(items) {
+  const list = document.querySelector("#archive-list"); list.replaceChildren();
+  if (!items.length) { list.innerHTML = '<p class="empty-state">暂无归档对话。</p>'; return; }
   items.forEach((item) => {
     const row = document.createElement("article"); row.className = "profile-row"; row.dataset.conversationId = item.id;
-    row.innerHTML = `<div><strong></strong><span></span></div><div class="profile-row__actions"><button type="button" data-trash-action="restore">恢复</button><button type="button" data-trash-action="permanent">永久删除</button></div>`;
-    row.querySelector("strong").textContent = item.title; row.querySelector("span").textContent = `删除于 ${new Date(item.deleted_at * 1000).toLocaleString("zh-CN")}`; list.append(row);
+    row.innerHTML = '<div><strong></strong><span></span></div><button type="button" data-archive-action="restore">恢复到聊天</button>';
+    row.querySelector("strong").textContent = item.title; row.querySelector("span").textContent = `归档于 ${new Date(item.deleted_at * 1000).toLocaleString("zh-CN")}`; list.append(row);
   });
 }
 
@@ -634,6 +855,7 @@ async function handleProfileAction(event) {
   try {
     if (button.dataset.poemAction === "favorite") await apiFetch(`/v1/profile/poems/${poemId}/favorite`, { method: button.textContent === "★" ? "DELETE" : "POST" });
     if (button.dataset.poemAction === "delete") { if (!window.confirm("删除这首作品？")) return; await apiFetch(`/v1/profile/poems/${poemId}`, { method: "DELETE" }); }
+    if (button.dataset.poemAction === "public") await apiFetch(`/v1/profile/poems/${poemId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_public: button.textContent !== "取消公开" }) });
     if (button.dataset.poemAction === "collect") {
       if (!profileCollections.length) { announce("请先新建一个作品合集。"); return; }
       const choice = window.prompt(`输入合集名称：\n${profileCollections.map((item) => item.name).join("、")}`);
@@ -650,26 +872,10 @@ document.querySelector("#new-collection-button")?.addEventListener("click", asyn
   try { await apiFetch("/v1/profile/poem-collections", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() }) }); await loadProfileData(); } catch (error) { announce(`创建合集失败：${error.message}`); }
 });
 
-document.querySelector("#new-folder-button")?.addEventListener("click", async () => {
-  const name = window.prompt("文件夹名称"); if (!name?.trim()) return;
-  try { await apiFetch("/v1/conversation-folders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() }) }); await loadProfileData(); } catch (error) { announce(`创建文件夹失败：${error.message}`); }
-});
-
-document.querySelector("#folder-list")?.addEventListener("change", async (event) => {
-  const select = event.target.closest("[data-conversation-folder]"); if (!select) return;
-  try { await apiFetch(`/v1/conversations/${select.dataset.conversationFolder}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(select.value ? { folder_id: select.value } : { clear_folder: true }) }); await loadProfileData(); } catch (error) { announce(`移动对话失败：${error.message}`); }
-});
-
-document.querySelector("#folder-list")?.addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-conversation-action='delete']"); if (!button) return;
-  const row = button.closest("[data-conversation-id]");
-  try { await apiFetch(`/v1/conversations/${row.dataset.conversationId}`, { method: "DELETE" }); await loadProfileData(); } catch (error) { announce(`删除对话失败：${error.message}`); }
-});
-
-document.querySelector("#trash-list")?.addEventListener("click", async (event) => {
-  const button = event.target.closest("[data-trash-action]"); if (!button) return;
-  const row = button.closest("[data-conversation-id]"); const id = row.dataset.conversationId;
-  try { const path = button.dataset.trashAction === "restore" ? `/v1/conversations/${id}/restore` : `/v1/conversations/${id}/permanent`; if (button.dataset.trashAction === "permanent" && !window.confirm("永久删除这个对话？")) return; await apiFetch(path, { method: button.dataset.trashAction === "restore" ? "POST" : "DELETE" }); await loadProfileData(); } catch (error) { announce(`回收站操作失败：${error.message}`); }
+document.querySelector("#archive-list")?.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-archive-action='restore']"); if (!button) return;
+  const id = button.closest("[data-conversation-id]").dataset.conversationId;
+  try { await apiFetch(`/v1/conversations/${id}/restore`, { method: "POST" }); await loadConversations(); await loadProfileData(); announce("对话已恢复"); } catch (error) { announce(`恢复失败：${error.message}`); }
 });
 
 document.querySelector("#change-password-form")?.addEventListener("submit", async (event) => {
@@ -709,18 +915,71 @@ function requireLogin() {
 }
 
 function updateAuthUi() {
-  document.querySelector("#login-button").hidden = Boolean(currentUser);
-  document.querySelector("#logout-button").hidden = !currentUser;
+  const accountLabel = document.querySelector("#account-entry-label");
+  if (accountLabel) accountLabel.textContent = currentUser ? currentUser.display_name : "登录 / 注册";
+  document.querySelector("#logout-button").hidden = true;
+  document.querySelector("#profile-logout-button").hidden = !currentUser;
+  document.querySelector("#drawer-login-action").hidden = Boolean(currentUser);
+  document.querySelector("#drawer-logout-action").hidden = !currentUser;
+  document.querySelector("#home-nav-link").hidden = Boolean(currentUser);
+  document.querySelector(".site-brand").href = currentUser ? "#forum" : "#home";
   document.querySelector("#chat-user-status").textContent = currentUser ? `已登录：${currentUser.display_name}` : "未登录，请先登录";
   document.querySelector("#profile-user-label").textContent = currentUser ? `${currentUser.display_name} 的创作档案` : "登录后查看你生成的全部诗词。";
+  const displayName = document.querySelector("#profile-display-name");
+  const bio = document.querySelector("#profile-bio");
+  if (displayName) displayName.value = currentUser?.display_name || "";
+  if (bio) bio.value = currentUser?.bio || "";
+  const notifyReactions = document.querySelector("#profile-notify-reactions");
+  if (notifyReactions) notifyReactions.checked = currentUser?.notify_on_reaction !== false;
+  setUserAvatar(document.querySelector("#profile-avatar-preview"), currentUser);
+  setUserAvatar(document.querySelector("#header-avatar"), currentUser);
+  setUserAvatar(document.querySelector("#drawer-avatar"), currentUser);
+  const drawerName = document.querySelector("#drawer-user-name");
+  const drawerHandle = document.querySelector("#drawer-user-handle");
+  if (drawerName) drawerName.textContent = currentUser?.display_name || "访客";
+  if (drawerHandle) drawerHandle.textContent = currentUser ? `@${currentUser.username}` : "登录后管理创作";
+  const adminLink = document.querySelector("#admin-nav-link");
+  if (adminLink) adminLink.hidden = currentUser?.role !== "admin";
+}
+
+function setUserAvatar(element, user) {
+  if (!element) return;
+  element.replaceChildren();
+  const url = user?.avatar_url;
+  if (url && /^\/media\/avatars\/[\w.-]+$/.test(url)) {
+    const img = document.createElement("img"); img.src = url; img.alt = ""; element.append(img);
+  } else element.textContent = (user?.display_name || user?.username || "诗").slice(0, 1);
+}
+
+function resetAuthenticatedUi() {
+  authGeneration++;
+  conversationLoadVersion++;
+  if (activeConversationEvents) activeConversationEvents.abort();
+  if (activeChatRequest) activeChatRequest.abort();
+  chatBusy = false;
+  chatThread.innerHTML = initialThreadMarkup;
+  chatInput.value = "";
+  document.querySelector("#conversation-list").innerHTML = "<p>登录后查看历史对话</p>";
+  for (const selector of ["#poem-list", "#favorite-list", "#collection-list", "#archive-list", "#notification-list", "#following-list", "#user-search-results", "#thread-page-content", "#compose-preview", "#reply-poem-preview", "#compose-poem-preview"]) document.querySelector(selector)?.replaceChildren();
+  document.querySelector("#compose-form").reset();
+  document.querySelector("#notification-count").hidden = true;
+  document.querySelector("#notification-count").textContent = "";
+  window.forumComposePoemIds = []; window.forumReplyPoemIds = [];
+  ownedPoems = []; favoritePoems = []; profilePoems = []; profileCollections = [];
+  sessionStorage.removeItem("shiju_share_poem");
 }
 
 async function loadCurrentUser() {
   if (!authToken) return updateAuthUi();
   try { currentUser = await apiFetch("/v1/auth/me"); }
-  catch { authToken = ""; localStorage.removeItem("shiju_token"); }
+  catch { authToken = ""; localStorage.removeItem("shiju_token"); resetAuthenticatedUi(); }
   updateAuthUi();
-  if (currentUser) { await loadConversations({ restore: true }); await loadProfileData(); }
+  if (currentUser) {
+    if (routeFromHash() === "home") showRoute("chat", { scroll: false });
+    await loadConversations({ restore: true }); await loadProfileData();
+    try { const notices = await apiFetch("/v1/forum/notifications?limit=5"); const badge = document.querySelector("#notification-count"); badge.textContent = notices.unread || ""; badge.hidden = !(notices.unread > 0); await renderDrawerNotifications(notices); } catch { /* forum notification store may not exist on an older database */ }
+    if (routeFromHash() === "admin") await loadAdminData();
+  }
 }
 
 function appendMessage(text, role, state = "") {
@@ -1041,6 +1300,7 @@ function renderAvailableScrolls(container, job, requestMeta) {
     const value = {
       ...requestMeta,
       ...work,
+      created_at: work.created_at ?? job.created_at ?? requestMeta.created_at,
       content: work.content || work.text || work.full_text || work.display_text || "",
     };
     const key = `${job.job_id}:${ordinal}`;
@@ -1049,6 +1309,7 @@ function renderAvailableScrolls(container, job, requestMeta) {
     if (!existing || existing.dataset.evaluationState !== String(evaluationState)) {
       const scroll = createPoemHandscroll(value, {
         resultLabel: `候选 ${ordinal}`,
+        showTime: true,
         evaluationPending: !value.evaluation && !failedEvaluations.has(key),
       });
       scroll.dataset.candidateOrdinal = String(ordinal);
@@ -1271,21 +1532,521 @@ document.querySelector("#new-chat").addEventListener("click", () => {
 });
 
 document.querySelector("#conversation-list").addEventListener("click", async (event) => {
+  const archive = event.target.closest("[data-archive-conversation]");
+  if (archive) { pendingArchiveId = archive.dataset.archiveConversation; document.querySelector("#archive-dialog").showModal(); return; }
   const button = event.target.closest("button[data-conversation-id]");
   if (!button) return;
   try { await openConversation(button.dataset.conversationId); }
   catch (error) { announce(`无法打开对话：${error.message}`); }
 });
 
-loadCurrentUser();
+const forumState = { sections: [], sectionId: "", threadId: "", page: 1, replyParentId: "" };
 
-document.querySelectorAll(".forum-categories button").forEach((button) => {
-  button.addEventListener("click", () => {
-    document.querySelectorAll(".forum-categories button").forEach((item) => item.setAttribute("aria-pressed", "false"));
-    button.setAttribute("aria-pressed", "true");
-    announce(`已切换到“${button.textContent}”样式状态。`);
+function formatForumTime(value) {
+  const date = new Date(Number(value) * 1000);
+  if (Number.isNaN(date.getTime())) return "刚刚";
+  return date.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function forumAvatar(user, className = "thread-avatar") {
+  const avatar = document.createElement("div"); avatar.className = className; setUserAvatar(avatar, user); return avatar;
+}
+
+function openThreadDialog() {
+  if (!requireLogin()) return;
+  window.location.hash = "forum/compose";
+}
+
+function renderForumCategories() {
+  const container = document.querySelector("#forum-categories");
+  container.replaceChildren();
+  forumState.sections.forEach((section) => {
+    const button = document.createElement("button");
+    button.type = "button"; button.textContent = section.name;
+    button.setAttribute("aria-pressed", String(section.id === forumState.sectionId));
+    button.addEventListener("click", () => { forumState.sectionId = section.id; forumState.page = 1; renderForumCategories(); loadForumThreads(); });
+    container.append(button);
   });
+}
+
+function renderForumThreads(payload) {
+  const list = document.querySelector("#thread-list");
+  list.replaceChildren();
+  const section = forumState.sections.find((item) => item.id === forumState.sectionId);
+  document.querySelector("#forum-section-description").textContent = section?.description || "";
+  if (!payload.items?.length) { list.innerHTML = '<p class="empty-state">这个分区还没有主题，发布第一篇吧。</p>'; return; }
+  payload.items.forEach((thread) => {
+    const article = document.createElement("article");
+    article.className = `thread-row${thread.is_pinned ? " thread-row--featured" : ""}`;
+    article.tabIndex = 0; article.dataset.threadId = thread.id;
+    const mark = thread.is_pinned ? document.createElement("div") : profileLink(thread.author, forumAvatar(thread.author), "thread-list-author");
+    if (thread.is_pinned) { mark.className = "thread-mark"; mark.textContent = "置"; mark.setAttribute("aria-hidden", "true"); }
+    const content = document.createElement("div"); content.className = "thread-content";
+    const meta = document.createElement("div"); meta.className = "thread-meta";
+    const author = document.createElement("a"); author.href = `#user/${encodeURIComponent(thread.author.id)}`; author.textContent = thread.author.display_name;
+    meta.append(author, document.createTextNode(` · ${formatForumTime(thread.updated_at)}`));
+    if (thread.last_reply_author) {
+      const last = document.createElement("a"); last.href = `#user/${encodeURIComponent(thread.last_reply_author.id)}`; last.textContent = thread.last_reply_author.display_name;
+      meta.append(document.createTextNode(" · 最后回复 "), last, document.createTextNode(` ${formatForumTime(thread.last_reply_at)}`));
+    }
+    const title = document.createElement("h2"); const link = document.createElement("a"); link.href = `#forum/thread/${thread.id}`; link.textContent = thread.title; title.append(link);
+    const excerpt = document.createElement("p"); excerpt.textContent = String(thread.content || "").slice(0, 140);
+    content.append(meta, title, excerpt);
+    const stats = document.createElement("div"); stats.className = "thread-stats"; const count = document.createElement("strong"); count.textContent = thread.reply_count; const label = document.createElement("span"); label.textContent = `回复 · ${thread.view_count || 0} 浏览`; stats.append(count, label);
+    if (thread.tags?.length) { const tags = document.createElement("div"); tags.className = "thread-tags"; tags.textContent = thread.tags.map((tag) => `#${tag}#`).join(" "); content.append(tags); }
+    article.append(mark, content, stats); list.append(article);
+    article.addEventListener("click", (event) => { if (event.target.closest("a")) return; window.location.hash = `forum/thread/${encodeURIComponent(thread.id)}`; });
+    article.addEventListener("keydown", (event) => { if (event.key === "Enter") window.location.hash = `forum/thread/${encodeURIComponent(thread.id)}`; });
+  });
+  const pagination = document.createElement("div"); pagination.className = "forum-pagination";
+  const previous = document.createElement("button"); previous.type = "button"; previous.className = "quiet-button"; previous.textContent = "上一页"; previous.disabled = payload.page <= 1; previous.addEventListener("click", () => { forumState.page -= 1; loadForumThreads(); });
+  const next = document.createElement("button"); next.type = "button"; next.className = "quiet-button"; next.textContent = "下一页"; next.disabled = payload.page >= payload.pages; next.addEventListener("click", () => { forumState.page += 1; loadForumThreads(); });
+  const label = document.createElement("span"); label.textContent = `${payload.page} / ${Math.max(payload.pages || 1, 1)}`; pagination.append(previous, label, next); list.append(pagination);
+}
+
+async function loadForumThreads() {
+  if (!forumState.sectionId) return;
+  const query = document.querySelector("#forum-search-input").value.trim();
+  try {
+    const sort = document.querySelector("#forum-sort")?.value || "latest";
+    const [payload, hotPayload] = await Promise.all([
+      apiFetch(`/v1/forum/sections/${encodeURIComponent(forumState.sectionId)}/threads?page=${forumState.page}&limit=30&sort=${sort}${query ? `&q=${encodeURIComponent(query)}` : ""}`),
+      apiFetch(`/v1/forum/sections/${encodeURIComponent(forumState.sectionId)}/threads?page=1&limit=5&sort=hot`),
+    ]);
+    renderForumThreads(payload);
+    const section = forumState.sections.find((item) => item.id === forumState.sectionId);
+    document.querySelector("#forum-stats").innerHTML = `<div><dt>主题</dt><dd>${payload.total ?? 0}</dd></div><div><dt>回复</dt><dd>${section?.reply_count ?? 0}</dd></div><div><dt>分区</dt><dd>${forumState.sections.length}</dd></div>`;
+    const hotList = document.querySelector("#forum-hot-list"); hotList.replaceChildren();
+    if (!hotPayload.items?.length) hotList.innerHTML = "<li>暂无热门讨论</li>";
+    else hotPayload.items.forEach((thread) => { const item = document.createElement("li"); const link = document.createElement("a"); link.href = `#forum/thread/${thread.id}`; link.textContent = thread.title; item.append(link); hotList.append(item); });
+  } catch (error) { document.querySelector("#thread-list").innerHTML = `<p class="empty-state">论坛加载失败：${error.message}</p>`; }
+}
+
+async function loadForumData() {
+  try {
+    const payload = await apiFetch("/v1/forum/sections"); forumState.sections = payload.items || [];
+    if (!forumState.sections.some((item) => item.id === forumState.sectionId)) forumState.sectionId = forumState.sections[0]?.id || "";
+    renderForumCategories(); await loadForumThreads();
+  } catch (error) { document.querySelector("#thread-list").innerHTML = `<p class="empty-state">无法连接论坛：${error.message}</p>`; }
+}
+
+function renderForumMarkdown(value) {
+  const escaped = String(value || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const blocks = escaped.replace(/```([\s\S]*?)```/g, (_match, code) => `<pre><code>${code.trim()}</code></pre>`);
+  return blocks.split(/\n\n+/).map((block) => {
+    if (block.startsWith("<pre>")) return block;
+    if (/^>/.test(block)) return `<blockquote>${block.replace(/^>\s?/gm, "")}</blockquote>`;
+    const lines = block.split("\n").map((line) => line.replace(/^###\s+/, "<strong>").replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\*(.+?)\*/g, "<em>$1</em>").replace(/`([^`]+)`/g, "<code>$1</code>"));
+    return `<p>${lines.join("<br>")}</p>`;
+  }).join("");
+}
+
+const poemPickerState = { source: "owned", allItems: [], items: [], selected: null, onConfirm: null, query: "" };
+
+async function poemPickerItems(source) {
+  if (source === "owned") return ownedPoems;
+  if (source === "favorites") return favoritePoems;
+  const groups = await Promise.all(profileCollections.map(async (collection) => {
+    const payload = await apiFetch(`/v1/profile/poem-collections/${encodeURIComponent(collection.id)}/items`);
+    return (payload.items || []).map((poem) => ({ ...poem, collection_name: collection.name }));
+  }));
+  return [...new Map(groups.flat().map((poem) => [poem.id, poem])).values()];
+}
+
+function renderPoemPicker() {
+  const list = document.querySelector("#poem-picker-list"); list.replaceChildren();
+  const status = document.querySelector("#poem-picker-status");
+  const confirm = document.querySelector("#poem-picker-confirm");
+  if (!poemPickerState.items.length) {
+    list.innerHTML = '<p class="empty-state">这里还没有可分享的诗作。</p>';
+    status.textContent = "暂无诗作"; confirm.disabled = true; return;
+  }
+  const wheel = document.createElement("div"); wheel.className = "poem-picker-wheel";
+  poemPickerState.items.forEach((poem) => {
+    const option = document.createElement("div"); option.className = "poem-picker-option"; option.tabIndex = 0; option.setAttribute("role", "button"); option.setAttribute("aria-pressed", String(poemPickerState.selected?.id === poem.id));
+    const scroll = createPoemHandscroll(poem, { shareable: false }); option.append(scroll);
+    const choose = (event) => { if (event.target.closest("button") && event.type === "click") return; poemPickerState.selected = poem; renderPoemPicker(); requestAnimationFrame(() => document.querySelector(`.poem-picker-option[aria-pressed='true']`)?.scrollIntoView({ block: "center" })); };
+    option.addEventListener("click", choose); option.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(event); } });
+    wheel.append(option);
+  });
+  list.append(wheel);
+  status.textContent = poemPickerState.selected ? `已选择《${poemPickerState.selected.title}》` : `${poemPickerState.items.length} 首 · 滚动翻阅后点击选择`;
+  confirm.disabled = !poemPickerState.selected;
+}
+
+async function openPoemPicker(onConfirm, preferredPoem = null) {
+  if (!requireLogin()) return;
+  if (!ownedPoems.length && !favoritePoems.length) await loadPoems();
+  if (!profileCollections.length) {
+    const collections = await apiFetch("/v1/profile/poem-collections"); profileCollections = collections.items || [];
+  }
+  poemPickerState.source = "owned"; poemPickerState.allItems = await poemPickerItems("owned"); poemPickerState.items = poemPickerState.allItems; poemPickerState.selected = null; poemPickerState.onConfirm = onConfirm; poemPickerState.query = "";
+  document.querySelector("#poem-picker-search").value = "";
+  if (preferredPoem?.id) {
+    poemPickerState.selected = poemPickerState.items.find((poem) => poem.id === preferredPoem.id) || null;
+  }
+  document.querySelectorAll("[data-poem-source]").forEach((tab) => tab.setAttribute("aria-selected", String(tab.dataset.poemSource === "owned")));
+  renderPoemPicker(); document.querySelector("#poem-picker-dialog").showModal();
+}
+
+function renderEditorPoems(container, ids) {
+  if (!container) return;
+  container.replaceChildren();
+  ids.map((id) => profilePoems.find((poem) => poem.id === id)).filter(Boolean).forEach((poem) => container.append(createPoemHandscroll(poem)));
+  container.hidden = !container.children.length;
+}
+
+function updateComposePreview() {
+  const preview = document.querySelector("#compose-preview");
+  preview.innerHTML = renderForumMarkdown(document.querySelector("#compose-content").value);
+}
+
+function bindEditorTools(root = document) {
+  root.querySelectorAll("[data-insert-mention]").forEach((button) => {
+    if (button.dataset.bound) return; button.dataset.bound = "true";
+    button.addEventListener("click", () => { const input = document.querySelector(button.dataset.insertMention); if (!input) return; const start = input.selectionStart ?? input.value.length; input.setRangeText("@", start, input.selectionEnd ?? start, "end"); input.focus(); input.dispatchEvent(new Event("input", { bubbles: true })); });
+  });
+  root.querySelectorAll("[data-empty-emoji]").forEach((button) => { if (button.dataset.bound) return; button.dataset.bound = "true"; button.addEventListener("click", () => announce("表情功能将在后续开放")); });
+}
+
+bindEditorTools();
+
+document.querySelectorAll("[data-poem-source]").forEach((tab) => tab.addEventListener("click", async () => {
+  poemPickerState.source = tab.dataset.poemSource; poemPickerState.allItems = await poemPickerItems(poemPickerState.source); poemPickerState.query = document.querySelector("#poem-picker-search").value; poemPickerState.items = poemPickerState.query ? poemPickerState.allItems.filter((poem) => `${poem.title}\n${poem.content}`.includes(poemPickerState.query)) : poemPickerState.allItems; poemPickerState.selected = null;
+  document.querySelectorAll("[data-poem-source]").forEach((item) => item.setAttribute("aria-selected", String(item === tab))); renderPoemPicker();
+}));
+document.querySelector("#poem-picker-search")?.addEventListener("input", (event) => {
+  poemPickerState.query = event.target.value;
+  poemPickerState.items = poemPickerState.query ? poemPickerState.allItems.filter((poem) => `${poem.title}\n${poem.content}`.includes(poemPickerState.query)) : poemPickerState.allItems;
+  if (poemPickerState.selected && !poemPickerState.items.some((poem) => poem.id === poemPickerState.selected.id)) poemPickerState.selected = null;
+  renderPoemPicker();
 });
+document.querySelector("#poem-picker-close")?.addEventListener("click", () => document.querySelector("#poem-picker-dialog").close());
+document.querySelector("#poem-picker-confirm")?.addEventListener("click", () => {
+  if (!poemPickerState.selected) return;
+  poemPickerState.onConfirm?.(poemPickerState.selected); document.querySelector("#poem-picker-dialog").close();
+});
+
+function forumReactionButtons(targetType, targetId, value = {}) {
+  const wrap = document.createElement("div"); wrap.className = "forum-reactions";
+  [["like", "赞", value.like_count || 0, value.liked_by_me], ["question", "？", value.question_count || 0, value.questioned_by_me]].forEach(([type, label, count, active]) => {
+    const button = document.createElement("button"); button.type = "button"; button.dataset.reactionType = type; button.className = active ? "is-active" : ""; button.textContent = `${label} ${count}`;
+    button.addEventListener("click", async () => { if (!requireLogin()) return; try { const result = await apiFetch(`/v1/forum/${targetType}/${targetId}/reaction`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reaction_type: type }) }); wrap.querySelectorAll("[data-reaction-type]").forEach((item) => { const kind = item.dataset.reactionType; item.classList.toggle("is-active", Boolean(result.mine?.[kind])); item.textContent = `${kind === "like" ? "赞" : "？"} ${result.counts?.[kind] ?? 0}`; }); } catch (error) { announce(error.message); } }); wrap.append(button);
+  });
+  return wrap;
+}
+
+function profileLink(user, child, className = "") {
+  const link = document.createElement("a"); link.href = `#user/${encodeURIComponent(user.id)}`; link.className = className; link.append(child); return link;
+}
+
+function replyInteractionTotal(reply) {
+  return Number(reply.like_count || 0) + Number(reply.question_count || 0);
+}
+
+function collectReplyDescendants(reply, children, result = [], visited = new Set()) {
+  const nested = children.get(reply.id) || [];
+  nested.forEach((child) => {
+    if (visited.has(child.id)) return;
+    visited.add(child.id);
+    result.push(child);
+    collectReplyDescendants(child, children, result, visited);
+  });
+  return result;
+}
+
+function createReplyArticle(reply) {
+  const item = document.createElement("article"); item.className = "thread-detail__reply";
+  const avatar = profileLink(reply.author, forumAvatar(reply.author, "thread-reply-avatar"), "thread-author-link");
+  const replyBody = document.createElement("div"); replyBody.className = "thread-reply-body";
+  const meta = document.createElement("div"); meta.className = "thread-reply-meta";
+  const author = document.createElement("a"); author.href = `#user/${encodeURIComponent(reply.author.id)}`; author.textContent = reply.author.display_name;
+  const time = document.createElement("time"); time.dateTime = new Date(reply.created_at * 1000).toISOString(); time.textContent = formatForumTime(reply.created_at);
+  const floor = document.createElement("span"); floor.textContent = `#${reply.floor_no || ""}`;
+  meta.append(author, document.createTextNode(" · "), time, document.createTextNode(" · "), floor);
+  if (reply.parent_author) { const target = document.createElement("span"); target.className = "thread-reply-target"; target.textContent = `回复 ${reply.parent_author.display_name}`; meta.append(target); }
+  const text = document.createElement("div"); text.className = "thread-reply-content";
+  (reply.poems || []).forEach((poem) => text.append(createPoemHandscroll(poem, { shareable: false, showTime: true })));
+  const markdown = document.createElement("div"); markdown.innerHTML = renderForumMarkdown(reply.content); text.append(markdown);
+  const actions = document.createElement("div"); actions.className = "thread-reply-actions";
+  const respond = document.createElement("button"); respond.type = "button"; respond.className = "text-button"; respond.textContent = "回复";
+  respond.addEventListener("click", () => {
+    const activeThread = document.querySelector("[data-view='forum-thread']:not([hidden])");
+    forumState.replyParentId = reply.id;
+    activeThread.querySelector("#thread-reply-parent").value = reply.id;
+    const label = activeThread.querySelector("#thread-reply-target-label");
+    label.dataset.replyId = reply.id;
+    label.querySelector("span").textContent = `正在回复 ${reply.author.display_name} · #${reply.floor_no}`;
+    label.hidden = false;
+    activeThread.querySelector("#thread-reply-content").focus();
+  });
+  actions.append(respond, forumReactionButtons("replies", reply.id, reply));
+  if (currentUser?.id === reply.author.id) {
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "text-button text-button--danger"; remove.textContent = "删除";
+    remove.addEventListener("click", async () => { if (!window.confirm("删除这条回复？")) return; await apiFetch(`/v1/forum/replies/${reply.id}`, { method: "DELETE" }); await loadThreadPage(); announce("回复已删除"); }); actions.append(remove);
+  }
+  replyBody.append(meta, text, actions); item.append(avatar, replyBody);
+  return item;
+}
+
+function replyNode(reply, children, threadId, depth = 0) {
+  const details = document.createElement("details");
+  details.className = `thread-reply-floor${depth ? " thread-reply-floor--nested" : ""}`;
+  details.id = `reply-${reply.id}`; details.open = true;
+  const summary = document.createElement("summary"); summary.className = "thread-reply-summary";
+  summary.append(forumAvatar(reply.author, "thread-reply-avatar"));
+  const summaryText = document.createElement("span"); summaryText.textContent = `${reply.author.display_name}：${String(reply.content || "分享了一首诗作").replace(/\s+/g, " ").slice(0, 42)}`; summary.append(summaryText);
+  details.append(summary, createReplyArticle(reply));
+  const nested = children.get(reply.id) || [];
+  if (nested.length) { const group = document.createElement("div"); group.className = "thread-reply-children"; nested.forEach((child) => group.append(replyNode(child, children, threadId, depth + 1))); details.append(group); }
+  return details;
+}
+
+function createMobileReplyPreview(reply) {
+  const preview = document.createElement("article");
+  preview.className = "thread-reply-preview";
+  preview.id = `reply-${reply.id}`;
+  const author = document.createElement("strong"); author.textContent = reply.author?.display_name || "诗友";
+  const copy = document.createElement("p"); copy.textContent = String(reply.content || "分享了一首诗作").replace(/\s+/g, " ").slice(0, 100);
+  const stats = document.createElement("span"); stats.className = "thread-reply-preview__stats";
+  stats.textContent = `赞 ${reply.like_count || 0} · ？ ${reply.question_count || 0}`;
+  preview.append(author, copy, stats);
+  return preview;
+}
+
+function createMobileExpandedReply(reply, children, threadId, depth = 0) {
+  const node = document.createElement("div");
+  node.className = `thread-reply-mobile-node${depth ? " thread-reply-mobile-node--nested" : ""}`;
+  node.id = `reply-${reply.id}`;
+  node.append(createReplyArticle(reply));
+  const nested = children.get(reply.id) || [];
+  if (nested.length) {
+    const group = document.createElement("div"); group.className = "thread-reply-mobile-children thread-reply-mobile-children--expanded";
+    [...nested].sort((left, right) => replyInteractionTotal(right) - replyInteractionTotal(left)).forEach((child) => group.append(createMobileExpandedReply(child, children, threadId, depth + 1)));
+    node.append(group);
+  }
+  return node;
+}
+
+function createMobileReplyNode(reply, children, threadId, depth = 0) {
+  const node = document.createElement("div");
+  node.className = `thread-reply-mobile-node${depth ? " thread-reply-mobile-node--nested" : ""}`;
+  node.id = `reply-${reply.id}`;
+  node.append(createReplyArticle(reply));
+  const nested = children.get(reply.id) || [];
+  const descendants = collectReplyDescendants(reply, children);
+  if (!descendants.length) return node;
+
+  const group = document.createElement("div"); group.className = "thread-reply-mobile-children";
+  const ranked = descendants.sort((left, right) => replyInteractionTotal(right) - replyInteractionTotal(left) || Number(right.created_at || 0) - Number(left.created_at || 0));
+  const preview = document.createElement("div"); preview.className = "thread-reply-mobile-preview";
+  ranked.slice(0, 2).forEach((child) => preview.append(createMobileReplyPreview(child)));
+  group.append(preview);
+  if (ranked.length >= 2) {
+    const remaining = document.createElement("button");
+    remaining.type = "button";
+    remaining.className = "thread-reply-mobile-more";
+    remaining.textContent = ranked.length === 2 ? "查看完整评论" : `查看剩余 ${ranked.length - 2} 条回复`;
+    remaining.addEventListener("click", () => {
+      group.replaceChildren();
+      [...nested].sort((left, right) => replyInteractionTotal(right) - replyInteractionTotal(left) || Number(right.created_at || 0) - Number(left.created_at || 0)).forEach((child) => group.append(createMobileExpandedReply(child, children, threadId, depth + 1)));
+    }, { once: true });
+    group.append(remaining);
+  }
+  node.append(group);
+  return node;
+}
+
+async function loadThreadPage() {
+  const match = window.location.hash.match(/^#forum\/thread\/([^/]+)/); const id = match ? decodeURIComponent(match[1]) : ""; if (!id) return;
+  const container = document.querySelector("#thread-page-content"); container.innerHTML = '<p class="empty-state">正在加载主题……</p>'; forumState.threadId = id; forumState.replyParentId = "";
+  try {
+    const [thread, replies] = await Promise.all([apiFetch(`/v1/forum/threads/${encodeURIComponent(id)}`), apiFetch(`/v1/forum/threads/${encodeURIComponent(id)}/replies?limit=100`)]);
+    container.replaceChildren();
+    const heading = document.createElement("header"); heading.className = "thread-page-heading";
+    const authorRow = document.createElement("div"); authorRow.className = "thread-author-row";
+    const authorCopy = document.createElement("div"); const authorName = document.createElement("a"); authorName.href = `#user/${thread.author.id}`; authorName.textContent = thread.author.display_name;
+    const authorTime = document.createElement("span"); authorTime.textContent = `${thread.section_name} · ${formatForumTime(thread.created_at)}`; authorCopy.append(authorName, authorTime);
+    authorRow.append(profileLink(thread.author, forumAvatar(thread.author, "thread-author-avatar"), "thread-author-link"), authorCopy);
+    const title = document.createElement("h1"); title.id = "thread-page-title"; title.textContent = thread.title;
+    const byline = document.createElement("p"); byline.className = "thread-detail__byline"; byline.textContent = `浏览 ${thread.view_count || 0} · 回复 ${thread.reply_count || 0}`; heading.append(authorRow, title, byline);
+
+    const body = document.createElement("article"); body.className = "thread-post thread-post--main";
+    (thread.poems || []).forEach((poem) => body.append(createPoemHandscroll(poem, { shareable: false, showTime: true })));
+    const markdown = document.createElement("div"); markdown.className = "thread-post-copy"; markdown.innerHTML = renderForumMarkdown(thread.content); body.append(markdown, forumReactionButtons("threads", id, thread));
+    const controls = document.createElement("div"); controls.className = "thread-page-actions";
+    const follow = document.createElement("button"); follow.type = "button"; follow.className = "quiet-button"; follow.textContent = thread.following ? "取消关注" : "关注主题";
+    follow.addEventListener("click", async () => { if (!requireLogin()) return; await apiFetch(`/v1/forum/threads/${id}/follow`, { method: thread.following ? "DELETE" : "POST" }); thread.following = !thread.following; follow.textContent = thread.following ? "取消关注" : "关注主题"; }); controls.append(follow);
+    if (currentUser?.id === thread.author.id) { const remove = document.createElement("button"); remove.type = "button"; remove.className = "quiet-button quiet-button--danger"; remove.textContent = "删除主题"; remove.addEventListener("click", async () => { if (!window.confirm("删除这个主题及其讨论？")) return; await apiFetch(`/v1/forum/threads/${id}`, { method: "DELETE" }); window.location.hash = "forum"; announce("主题已删除"); }); controls.append(remove); }
+
+    const replyHeading = document.createElement("h2"); replyHeading.className = "thread-detail__replies-heading"; replyHeading.textContent = `讨论（${replies.total || 0}）`;
+    const replyList = document.createElement("div"); replyList.className = "thread-detail__replies";
+    const byId = new Map((replies.items || []).map((reply) => [reply.id, reply])); const children = new Map();
+    (replies.items || []).forEach((reply) => { if (!reply.parent_reply_id) return; if (!children.has(reply.parent_reply_id)) children.set(reply.parent_reply_id, []); children.get(reply.parent_reply_id).push(reply); });
+    const mobileThread = window.matchMedia("(max-width: 760px)").matches;
+    (replies.items || []).filter((reply) => !reply.parent_reply_id || !byId.has(reply.parent_reply_id)).forEach((reply) => replyList.append((mobileThread ? createMobileReplyNode : replyNode)(reply, children, id)));
+
+    const form = document.createElement("form"); form.className = "thread-reply-form";
+    form.innerHTML = '<input type="hidden" id="thread-reply-parent"><div id="thread-reply-target-label" class="reply-target-label" hidden><span></span><button type="button" aria-label="取消回复目标" title="取消回复">×</button></div><textarea id="thread-reply-content" rows="5" maxlength="20000" required placeholder="写下你的回应……"></textarea><div id="reply-poem-preview" class="editor-poem-preview" hidden></div><div class="editor-actions editor-actions--split"><div class="editor-tools"><button type="button" class="editor-tool" id="thread-reply-share" aria-label="分享诗作" title="分享诗作">+</button><button type="button" class="editor-tool" data-insert-mention="#thread-reply-content" aria-label="提及用户" title="提及用户">@</button><button type="button" class="editor-tool" data-empty-emoji aria-label="表情" title="表情功能暂未开放">:-)</button></div><span class="form-status" id="thread-reply-draft-status"></span><button type="submit" class="primary-button">发送回复</button></div><p class="form-status" id="thread-reply-status"></p>';
+    form.querySelector("#thread-reply-target-label button").addEventListener("click", () => { forumState.replyParentId = ""; form.querySelector("#thread-reply-parent").value = ""; delete form.querySelector("#thread-reply-target-label").dataset.replyId; form.querySelector("#thread-reply-target-label").hidden = true; });
+    form.querySelector("#thread-reply-share").addEventListener("click", () => openPoemPicker((poem) => { window.forumReplyPoemIds = [poem.id]; renderEditorPoems(form.querySelector("#reply-poem-preview"), window.forumReplyPoemIds); announce(`已选择《${poem.title}》`); }));
+    bindEditorTools(form);
+    if (currentUser) {
+      const replyDraft = (await apiFetch("/v1/forum/drafts?kind=reply")).items?.find((draft) => draft.thread_id === id);
+      if (replyDraft) form.querySelector("#thread-reply-content").value = replyDraft.content || "";
+      form.querySelector("#thread-reply-content").addEventListener("input", (event) => {
+        window.clearTimeout(event.target._draftTimer);
+        event.target._draftTimer = window.setTimeout(() => apiFetch("/v1/forum/drafts", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "reply", thread_id: id, content: event.target.value }) }).then(() => { form.querySelector("#thread-reply-draft-status").textContent = "草稿已保存"; }).catch((error) => { form.querySelector("#thread-reply-draft-status").textContent = error.message; }), 700);
+      });
+    }
+    form.addEventListener("submit", async (event) => { event.preventDefault(); if (!requireLogin()) return; const content = form.querySelector("#thread-reply-content").value.trim(); const parentReplyId = forumState.replyParentId || form.querySelector("#thread-reply-target-label").dataset.replyId || null; try { await apiFetch(`/v1/forum/threads/${id}/replies`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ content, parent_reply_id: parentReplyId, poem_ids: window.forumReplyPoemIds || [] }) }); window.forumReplyPoemIds = []; forumState.replyParentId = ""; await loadThreadPage(); announce("回复已发送"); } catch (error) { form.querySelector("#thread-reply-status").textContent = error.message; } });
+    container.append(heading, body, controls, replyHeading, replyList, form);
+    const anchorMatch = window.location.hash.match(/\/reply\/([^/]+)$/);
+    if (anchorMatch) requestAnimationFrame(() => document.querySelector(`#reply-${CSS.escape(decodeURIComponent(anchorMatch[1]))}`)?.scrollIntoView({ block: "center" }));
+  } catch (error) { container.innerHTML = `<p class="empty-state">无法打开主题：${error.message}</p>`; }
+}
+
+async function loadComposePage() {
+  if (!requireLogin()) return;
+  const select = document.querySelector("#compose-section"); if (!select.options.length) { const payload = await apiFetch("/v1/forum/sections"); (payload.items || []).forEach((section) => select.add(new Option(section.name, section.id))); if (forumState.sectionId) select.value = forumState.sectionId; }
+  const form = document.querySelector("#compose-form");
+  const draft = (await apiFetch("/v1/forum/drafts?kind=thread")).items?.[0];
+  if (draft && !form.querySelector("#compose-title").value && !form.querySelector("#compose-content").value) {
+    form.querySelector("#compose-title").value = draft.title || "";
+    form.querySelector("#compose-content").value = draft.content || "";
+    form.querySelector("#compose-tags").value = (draft.tags || []).map((tag) => `#${tag}#`).join(" ");
+    if (draft.section_id && [...select.options].some((option) => option.value === draft.section_id)) select.value = draft.section_id;
+    updateComposePreview();
+  }
+  const shared = sessionStorage.getItem("shiju_share_poem");
+  if (shared) {
+    const value = JSON.parse(shared); if (!profilePoems.length) await loadPoems();
+    const poem = profilePoems.find((item) => item.id === value.id) || profilePoems.find((item) => item.title === value.title && item.content === value.content);
+    if (poem) { window.forumComposePoemIds = [poem.id]; renderEditorPoems(document.querySelector("#compose-poem-preview"), window.forumComposePoemIds); updateComposePreview(); }
+    else announce("这首诗作尚未保存，请在生成完成后再分享。");
+    sessionStorage.removeItem("shiju_share_poem");
+  }
+}
+
+async function loadNotifications() {
+  if (!requireLogin()) return;
+  const payload = await apiFetch("/v1/forum/notifications"); const list = document.querySelector("#notification-list"); list.replaceChildren(); if (!payload.items?.length) { list.innerHTML = '<p class="empty-state">暂无通知。</p>'; await renderDrawerNotifications(payload); return; }
+  payload.items.forEach((item) => { const row = document.createElement("article"); row.className = `notification-row${item.read_at ? "" : " is-unread"}`; const actor = item.actor_display_name || "有人"; const text = { reply: `${actor} 回复了你的主题`, mention: `${actor} 回复了你的评论`, thread_followed: `${actor} 在你关注的主题中发表了新回复`, reaction_like: `${actor} 赞了你的内容`, reaction_question: `${actor} 对你的内容表示疑惑`, report_resolved: "你的举报已有处理结果" }[item.notification_type] || "你有一条新通知"; row.innerHTML = `<strong>${text}</strong><time>${formatForumTime(item.created_at)}</time>`; row.addEventListener("click", async () => { await apiFetch(`/v1/forum/notifications/read?notification_id=${item.id}`, { method: "POST" }); if (item.thread_id) window.location.hash = `forum/thread/${item.thread_id}${item.reply_id ? `/reply/${item.reply_id}` : ""}`; else await loadNotifications(); }); list.append(row); });
+  document.querySelector("#notification-count").textContent = payload.unread || ""; document.querySelector("#notification-count").hidden = !(payload.unread > 0);
+  await renderDrawerNotifications(payload);
+}
+
+async function renderDrawerNotifications(payload) {
+  const badge = document.querySelector("#header-notification-badge");
+  const unread = Number(payload?.unread || 0);
+  if (badge) { badge.textContent = unread > 99 ? "99+" : String(unread); badge.hidden = unread < 1; }
+  const list = document.querySelector("#drawer-notification-list");
+  if (!list) return;
+  list.replaceChildren();
+  const items = (payload?.items || []).slice(0, 3);
+  if (!items.length) { list.innerHTML = '<p class="drawer-empty">暂无新通知</p>'; return; }
+  items.forEach((item) => {
+    const row = document.createElement("button"); row.type = "button"; row.className = `drawer-notification${item.read_at ? "" : " is-unread"}`;
+    const actor = item.actor_display_name || "有人";
+    row.innerHTML = `<span>${actor} ${item.notification_type === "reply" ? "回复了你的主题" : "有一条新通知"}</span><time>${formatForumTime(item.created_at)}</time>`;
+    row.addEventListener("click", () => { closeDrawers(); window.location.hash = item.thread_id ? `forum/thread/${item.thread_id}` : "notifications"; });
+    list.append(row);
+  });
+}
+
+async function loadDrawerNotifications() {
+  if (!currentUser) { renderDrawerNotifications({ items: [], unread: 0 }); return; }
+  try { await renderDrawerNotifications(await apiFetch("/v1/forum/notifications?limit=5")); } catch { renderDrawerNotifications({ items: [], unread: 0 }); }
+}
+
+async function loadPublicProfile() {
+  const match = window.location.hash.match(/^#user\/([^/]+)/); if (!match) return;
+  const container = document.querySelector("#public-profile-content");
+  try {
+    const user = await apiFetch(`/v1/forum/users/${encodeURIComponent(decodeURIComponent(match[1]))}`);
+    container.replaceChildren();
+    const heading = document.createElement("header"); heading.className = "public-profile-heading";
+    const avatar = forumAvatar(user, "user-avatar user-avatar--large");
+    const identity = document.createElement("div"); const eyebrow = document.createElement("p"); eyebrow.className = "eyebrow"; eyebrow.textContent = "诗友主页";
+    const title = document.createElement("h1"); title.id = "public-profile-title"; title.textContent = user.display_name || user.username;
+    const signature = document.createElement("p"); signature.className = "public-profile-signature"; signature.textContent = user.bio || "这位诗友还没有写下签名。";
+    const meta = document.createElement("p"); meta.className = "public-profile-meta"; meta.textContent = `@${user.username} · ${formatForumTime(user.created_at)} 加入 · ${user.following_count || 0} 关注 · ${user.follower_count || 0} 粉丝`;
+    identity.append(eyebrow, title, signature, meta); heading.append(avatar, identity); container.append(heading);
+
+    const section = (label, count) => { const node = document.createElement("section"); node.className = "public-profile-section"; const h2 = document.createElement("h2"); h2.textContent = `${label}（${count}）`; node.append(h2); container.append(node); return node; };
+    const poems = section("公开作品", user.poems?.length || 0);
+    if (user.poems?.length) user.poems.forEach((poem) => poems.append(createPoemHandscroll(poem, { shareable: false, showTime: true })));
+    else poems.insertAdjacentHTML("beforeend", '<p class="empty-state">暂未公开诗作。</p>');
+    const threads = section("发布的主题", user.threads?.length || 0); const threadList = document.createElement("div"); threadList.className = "public-activity-list";
+    (user.threads || []).forEach((thread) => { const link = document.createElement("a"); link.href = `#forum/thread/${thread.id}`; link.innerHTML = `<strong></strong><span>${formatForumTime(thread.created_at)} · ${thread.view_count || 0} 浏览</span>`; link.querySelector("strong").textContent = thread.title; threadList.append(link); });
+    threads.append(threadList); if (!user.threads?.length) threads.insertAdjacentHTML("beforeend", '<p class="empty-state">暂未发布主题。</p>');
+    const replies = section("参与的讨论", user.replies?.length || 0); const replyList = document.createElement("div"); replyList.className = "public-activity-list";
+    (user.replies || []).forEach((reply) => { const link = document.createElement("a"); link.href = `#forum/thread/${reply.thread_id}/reply/${reply.id}`; const strong = document.createElement("strong"); strong.textContent = `${reply.thread_title} · #${reply.floor_no}`; const excerpt = document.createElement("span"); excerpt.textContent = `${String(reply.content).replace(/\s+/g, " ").slice(0, 90)} · ${formatForumTime(reply.created_at)}`; link.append(strong, excerpt); replyList.append(link); });
+    replies.append(replyList); if (!user.replies?.length) replies.insertAdjacentHTML("beforeend", '<p class="empty-state">暂未参与讨论。</p>');
+  } catch (error) { container.innerHTML = `<p class="empty-state">无法加载用户资料：${error.message}</p>`; }
+}
+
+function composeTags() { return [...document.querySelector("#compose-tags").value.matchAll(/#([^#\s]+)#/g)].map((match) => match[1]); }
+
+async function saveComposeDraft() {
+  try {
+    await apiFetch("/v1/forum/drafts", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind: "thread", section_id: document.querySelector("#compose-section").value, title: document.querySelector("#compose-title").value, content: document.querySelector("#compose-content").value, tags: composeTags() }) });
+    document.querySelector("#draft-status").textContent = "草稿已保存";
+  } catch (error) { document.querySelector("#draft-status").textContent = error.message; }
+}
+
+document.querySelector("#compose-form")?.addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget; const section = document.querySelector("#compose-section").value; try { const created = await apiFetch(`/v1/forum/sections/${section}/threads`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: document.querySelector("#compose-title").value.trim(), content: document.querySelector("#compose-content").value.trim(), tags: composeTags(), poem_ids: window.forumComposePoemIds || [] }) }); window.forumComposePoemIds = []; form.reset(); document.querySelector("#compose-poem-preview").replaceChildren(); document.querySelector("#compose-poem-preview").hidden = true; document.querySelector("#compose-preview").replaceChildren(); document.querySelector("#draft-status").textContent = ""; announce("主题已发布"); window.location.hash = `forum/thread/${created.id}`; } catch (error) { document.querySelector("#draft-status").textContent = error.message; } });
+document.querySelector("#share-poem-button")?.addEventListener("click", () => openPoemPicker((poem) => { window.forumComposePoemIds = [poem.id]; renderEditorPoems(document.querySelector("#compose-poem-preview"), window.forumComposePoemIds); updateComposePreview(); announce(`已选择《${poem.title}》`); }));
+document.querySelectorAll("#compose-title, #compose-tags, #compose-section, #compose-content").forEach((input) => input.addEventListener(input.tagName === "SELECT" ? "change" : "input", () => { if (input.id === "compose-content") updateComposePreview(); window.clearTimeout(document.querySelector("#compose-form")._draftTimer); document.querySelector("#draft-status").textContent = "保存中……"; document.querySelector("#compose-form")._draftTimer = window.setTimeout(saveComposeDraft, 700); }));
+document.querySelectorAll("[data-editor-tab]").forEach((tab) => tab.addEventListener("click", () => { document.querySelectorAll("[data-editor-tab]").forEach((item) => item.classList.toggle("is-active", item === tab)); const preview = tab.dataset.editorTab === "preview"; document.querySelector("#compose-content").hidden = preview; document.querySelector("#compose-preview").hidden = !preview; }));
+document.querySelector("#mark-notifications-read")?.addEventListener("click", async () => { await apiFetch("/v1/forum/notifications/read", { method: "POST" }); await loadNotifications(); });
+
+document.querySelector("#forum-publish-button").addEventListener("click", openThreadDialog);
+
+let pendingArchiveId = null;
+document.querySelector("#archive-dialog").addEventListener("close", async (event) => {
+  if (event.target.returnValue !== "confirm" || !pendingArchiveId) { pendingArchiveId = null; return; }
+  const id = pendingArchiveId; pendingArchiveId = null;
+  try { await apiFetch(`/v1/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }); if (currentConversationId === id) { currentConversationId = null; chatSessionId = null; chatThread.innerHTML = initialThreadMarkup; } await loadConversations(); await loadProfileData(); announce("对话已归档"); } catch (error) { announce(`归档失败：${error.message}`); }
+});
+
+function renderUserRows(container, users, following = false) {
+  container.replaceChildren();
+  if (!users.length) { container.innerHTML = `<p class="empty-state">${following ? "还没有关注诗友。" : "没有找到用户。"}</p>`; return; }
+  users.filter((user) => user.id !== currentUser?.id).forEach((user) => {
+    const row = document.createElement("article"); row.className = "profile-row";
+    const text = document.createElement("div"); const name = document.createElement("a"); name.href = `#user/${encodeURIComponent(user.id)}`; const strong = document.createElement("strong"); strong.textContent = user.display_name || user.username; name.append(strong); const username = document.createElement("span"); username.textContent = `@${user.username}`; text.append(name, username);
+    const button = document.createElement("button"); button.type = "button"; button.textContent = following ? "取消关注" : "关注";
+    button.addEventListener("click", async () => { try { await apiFetch(`/v1/forum/users/${user.id}/follow`, { method: following ? "DELETE" : "POST" }); await loadProfileData(); announce(following ? "已取消关注。" : "已关注诗友。"); } catch (error) { announce(error.message); } });
+    row.append(text, button); container.append(row);
+  });
+}
+
+document.querySelector("#user-search-input")?.addEventListener("input", (event) => {
+  const query = event.target.value.trim(); window.clearTimeout(event.target.searchTimer);
+  if (!query) { document.querySelector("#user-search-results").replaceChildren(); return; }
+  event.target.searchTimer = window.setTimeout(async () => { try { const payload = await apiFetch(`/v1/forum/users/search?q=${encodeURIComponent(query)}&limit=20`); renderUserRows(document.querySelector("#user-search-results"), payload.items || [], false); } catch (error) { announce(error.message); } }, 250);
+});
+document.querySelector("#forum-search-input").addEventListener("input", () => { window.clearTimeout(forumState.searchTimer); forumState.searchTimer = window.setTimeout(loadForumThreads, 260); });
+document.querySelector("#forum-sort")?.addEventListener("change", () => { forumState.page = 1; loadForumThreads(); });
+
+async function loadAdminData() {
+  if (!currentUser) { if (!authToken) requireLogin(); return; }
+  if (currentUser.role !== "admin") { announce("只有管理员可以进入管理后台。"); window.location.hash = "forum"; return; }
+  try {
+    const [stats, users, reports, sections] = await Promise.all([apiFetch("/v1/admin/stats"), apiFetch("/v1/admin/users?limit=100"), apiFetch("/v1/admin/reports?report_status=open"), apiFetch("/v1/forum/sections")]);
+    const statsNode = document.querySelector("#admin-stats"); statsNode.replaceChildren(); Object.entries(stats).forEach(([key, value]) => { const item = document.createElement("div"); item.className = "admin-stat"; const valueNode = document.createElement("strong"); valueNode.textContent = value; const label = document.createElement("span"); label.textContent = { users: "用户", forum_sections: "分区", forum_threads: "主题", forum_replies: "回复", forum_reports: "举报" }[key] || key; item.append(valueNode, label); statsNode.append(item); });
+    const userList = document.querySelector("#admin-user-list"); userList.replaceChildren(); (users.items || []).forEach((user) => { const row = document.createElement("tr"); const name = document.createElement("td"); name.textContent = `${user.display_name}（${user.username}）`; const role = document.createElement("td"); const select = document.createElement("select"); ["user", "admin"].forEach((value) => select.add(new Option(value === "admin" ? "管理员" : "用户", value))); select.value = user.role; select.disabled = user.username === "admin" || user.id === currentUser.id; select.addEventListener("change", async () => { try { await apiFetch(`/v1/admin/users/${user.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ role: select.value }) }); announce("用户角色已更新。"); } catch (error) { announce(error.message); select.value = user.role; } }); role.append(select); const created = document.createElement("td"); created.textContent = formatForumTime(user.created_at); const actions = document.createElement("td"); if (user.username !== "admin" && user.id !== currentUser.id) { const button = document.createElement("button"); button.className = "text-button"; button.type = "button"; button.textContent = "删除"; button.addEventListener("click", async () => { if (!window.confirm(`删除用户 ${user.username}？`)) return; try { await apiFetch(`/v1/admin/users/${user.id}`, { method: "DELETE" }); await loadAdminData(); } catch (error) { announce(error.message); } }); actions.append(button); } row.append(name, role, created, actions); userList.append(row); });
+    const reportList = document.querySelector("#admin-report-list"); reportList.replaceChildren(); if (!reports.items?.length) reportList.innerHTML = '<p class="empty-state">暂无待处理举报。</p>'; else reports.items.forEach((report) => { const item = document.createElement("article"); item.className = "admin-report"; const text = document.createElement("p"); text.textContent = `${report.reason} · ${report.reporter_username}`; const button = document.createElement("button"); button.className = "text-button"; button.type = "button"; button.textContent = "标记已处理"; button.addEventListener("click", async () => { await apiFetch(`/v1/admin/reports/${report.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "resolved", note: "管理员已审核" }) }); await loadAdminData(); }); item.append(text, button); reportList.append(item); });
+    const sectionList = document.querySelector("#admin-section-list"); sectionList.replaceChildren(); (sections.items || []).forEach((section) => { const row = document.createElement("article"); row.className = "profile-row"; const text = document.createElement("div"); const name = document.createElement("strong"); name.textContent = section.name; const slug = document.createElement("span"); slug.textContent = `${section.slug} · ${section.thread_count} 个主题`; text.append(name, slug); const actions = document.createElement("div"); actions.className = "profile-row__actions"; const lock = document.createElement("button"); lock.type = "button"; lock.textContent = section.is_locked ? "解除锁定" : "锁定"; lock.addEventListener("click", async () => { try { await apiFetch(`/v1/admin/sections/${section.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_locked: !section.is_locked }) }); await loadAdminData(); } catch (error) { announce(error.message); } }); actions.append(lock); row.append(text, actions); sectionList.append(row); });
+  } catch (error) { announce(`管理数据加载失败：${error.message}`); }
+}
+
+document.querySelector("#admin-refresh").addEventListener("click", loadAdminData);
+document.querySelector("#admin-section-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await apiFetch("/v1/admin/sections", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: document.querySelector("#admin-section-name").value.trim(), slug: document.querySelector("#admin-section-slug").value.trim(), description: "", sort_order: forumState.sections.length * 10 + 10 }) }); event.target.reset(); await loadAdminData(); announce("分区已创建。"); } catch (error) { announce(error.message); } });
+document.querySelector("#profile-form").addEventListener("submit", async (event) => { event.preventDefault(); if (!requireLogin()) return; const status = document.querySelector("#profile-status"); status.textContent = "保存中……"; try { currentUser = await apiFetch("/v1/profile/me", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ display_name: document.querySelector("#profile-display-name").value.trim(), bio: document.querySelector("#profile-bio").value.trim(), notify_on_reaction: document.querySelector("#profile-notify-reactions").checked }) }); updateAuthUi(); status.textContent = "已保存"; } catch (error) { status.textContent = error.message; } });
+
+loadCurrentUser();
 
 function setupInkLandscape() {
   const canvas = document.querySelector("#ink-landscape");

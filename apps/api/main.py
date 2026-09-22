@@ -6,6 +6,7 @@ from .database import Database
 from .job_repository import JobRepository
 from .settings import ApiSettings
 from .user_repository import UserRepository
+from .forum_repository import ForumRepository
 
 
 def create_app(settings: ApiSettings | None = None, *, agent_service=None):
@@ -23,6 +24,8 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
     from .routes.profile import router as profile_router
     from .routes.public import router as public_router
     from .routes.worker import router as worker_router
+    from .routes.forum import router as forum_router
+    from .routes.admin import router as admin_router
 
     active = settings or ApiSettings.from_env()
     database = Database(active.database_path)
@@ -34,6 +37,7 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
     app.state.settings = active
     app.state.jobs = JobRepository(database)
     app.state.users = users
+    app.state.forum = ForumRepository(database)
     app.state.gpu_provider = ManualGpuProvider()
     project_root = Path(__file__).resolve().parents[2]
     if agent_service is not None:
@@ -50,7 +54,8 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
     @app.middleware("http")
     async def limit_request_size(request: Request, call_next):
         length = request.headers.get("content-length")
-        if length and int(length) > active.max_request_bytes:
+        limit = 2 * 1024 * 1024 if request.url.path == "/v1/profile/me/avatar" else active.max_request_bytes
+        if length and int(length) > limit:
             return JSONResponse(status_code=413, content={"detail": "request too large"})
         return await call_next(request)
 
@@ -73,10 +78,12 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
     app.include_router(conversations_router)
     app.include_router(folders_router)
     app.include_router(profile_router)
+    app.include_router(forum_router)
+    app.include_router(admin_router)
 
     @app.get("/", include_in_schema=False)
     def website():
-        return RedirectResponse("/web/prosody-checker/#chat")
+        return RedirectResponse("/web/prosody-checker/#home")
 
     app.mount(
         "/Rhyme",
@@ -93,6 +100,9 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
         StaticFiles(directory=project_root / "web", html=True),
         name="web",
     )
+    avatar_dir = active.database_path.parent / "avatars"
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+    app.mount("/media/avatars", StaticFiles(directory=avatar_dir), name="avatars")
     return app
 
 

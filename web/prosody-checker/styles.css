@@ -1003,6 +1003,7 @@ body[data-current-view="prosody"] .site-footer {
 .profile-sidebar { display: grid; gap: 4px; border-right: 1px solid var(--site-line); padding-right: 18px; }
 .profile-tab { border: 0; border-left: 2px solid transparent; padding: 11px 12px; background: transparent; color: var(--site-ink-soft); text-align: left; cursor: pointer; font: inherit; }
 .profile-tab:hover, .profile-tab.is-active { border-left-color: var(--site-red); background: var(--site-paper-deep); color: var(--site-red-dark); font-weight: 700; }
+.profile-tab--danger { margin-top: 12px; border-top: 1px solid var(--site-line); padding-top: 18px; color: var(--site-red-dark); }
 .profile-content { min-width: 0; }
 .profile-panel { min-height: 420px; }
 .profile-panel__heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin-bottom: 18px; border-bottom: 1px solid var(--site-line); padding-bottom: 12px; }
@@ -1010,8 +1011,8 @@ body[data-current-view="prosody"] .site-footer {
 .profile-filters label { display: flex; align-items: center; gap: 8px; color: var(--site-ink-soft); font-size: 12px; }
 .profile-filters select, .profile-row select { border: 1px solid var(--site-line); background: var(--site-surface); color: var(--site-ink); padding: 7px 9px; font: inherit; }
 .profile-grid { display: grid; gap: 22px; }
-.poem-card__actions { display: flex; justify-content: flex-end; gap: 8px; }
-.poem-card__actions button, .profile-row button { border: 0; padding: 5px 7px; background: transparent; color: var(--site-red-dark); cursor: pointer; font: inherit; font-size: 12px; }
+.poem-card__actions { display: flex; justify-content: flex-end; gap: 4px; }
+.poem-card__actions button, .profile-row button { border: 0; padding: 4px 5px; background: transparent; color: var(--site-red-dark); cursor: pointer; font: inherit; font-size: 12px; }
 .poem-card__actions button:hover, .profile-row button:hover { text-decoration: underline; }
 .poem-card__actions button:focus-visible, .profile-row button:focus-visible { outline: 2px solid var(--site-red); outline-offset: 2px; }
 .collection-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
@@ -1786,6 +1787,55 @@ input:focus {
   color: var(--site-red-dark);
 }
 
+.forum-toolbar__controls { display: flex; align-items: center; gap: 10px; }
+.forum-toolbar__controls select { height: 38px; padding: 0 9px; border: 1px solid var(--site-line-strong); background: var(--site-paper); }
+
+.notification-count { display: inline-grid; min-width: 18px; height: 18px; margin-left: 5px; padding: 0 4px; place-items: center; border-radius: 9px; background: var(--site-red); color: white; font-size: 10px; line-height: 1; }
+.forum-thread-view, .forum-compose-view, .notifications-view { min-height: calc(100svh - 66px); padding: 42px 0 76px; background: var(--site-surface); }
+.forum-thread-shell, .forum-compose-shell { max-width: 920px; }
+.back-link { display: inline-block; margin-bottom: 22px; color: var(--site-red-dark); font-size: 13px; }
+.thread-page-heading { padding: 20px 0 24px; border-bottom: 1px solid var(--site-line-strong); }
+.thread-page-heading h1 { margin: 5px 0 8px; font-family: var(--han-font-kai, serif); font-size: clamp(28px, 4vw, 44px); }
+.thread-post { padding: 28px 0; border-bottom: 1px solid var(--site-line-strong); line-height: 1.85; }
+.thread-post--main { font-size: 16px; }
+.thread-post pre, .markdown-preview pre { padding: 14px; overflow: auto; background: var(--site-paper); border: 1px solid var(--site-line); font: 13px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.thread-post blockquote, .markdown-preview blockquote { margin: 14px 0; padding: 8px 14px; border-left: 3px solid var(--site-red); color: var(--site-ink-soft); background: color-mix(in srgb, var(--site-paper) 60%, transparent); }
+.forum-reactions { display: flex; gap: 6px; margin-top: 18px; }
+.forum-reactions button { min-height: 30px; padding: 0 10px; border: 1px solid var(--site-line-strong); background: transparent; color: var(--site-ink-soft); cursor: pointer; }
+.forum-reactions button.is-active { border-color: var(--site-red); color: var(--site-red-dark); background: color-mix(in srgb, var(--site-red) 8%, transparent); }
+.thread-page-actions { display: flex; justify-content: flex-end; padding: 14px 0; }
+.thread-detail__replies-heading { margin: 30px 0 0; font-size: 20px; }
+.thread-detail__replies { display: grid; gap: 0; }
+.thread-detail__reply { padding: 22px 0; border-bottom: 1px solid var(--site-line); }
+.thread-reply-meta { margin-bottom: 8px; color: var(--site-ink-soft); font-size: 12px; }
+.thread-reply-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.thread-reply-actions .forum-reactions { margin-top: 0; }
+.thread-reply-floor { min-width: 0; }
+.thread-reply-floor--nested { margin-left: 52px; border-left: 2px solid color-mix(in srgb, var(--site-red) 35%, var(--site-line)); padding-left: 18px; }
+.thread-reply-summary { display: none; }
+.thread-reply-target { margin-left: 8px; color: var(--site-red-dark); }
+.reply-target-label { display: flex; margin-bottom: 8px; padding: 7px 10px; align-items: center; justify-content: space-between; gap: 10px; border-left: 2px solid var(--site-red); background: var(--site-paper-deep); color: var(--site-ink-soft); font-size: 12px; }
+.reply-target-label[hidden] { display: none; }
+.reply-target-label button { width: 26px; height: 26px; padding: 0; border: 0; background: transparent; color: var(--site-ink-soft); cursor: pointer; font-size: 18px; }
+.text-button--danger, .quiet-button--danger { color: #8b2f2f !important; }
+.thread-reply-form { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--site-line-strong); }
+.thread-reply-form textarea, .forum-compose-form textarea { width: 100%; padding: 12px; resize: vertical; border: 1px solid var(--site-line-strong); background: var(--site-paper); font: inherit; line-height: 1.7; }
+.forum-compose-form { display: grid; gap: 14px; max-width: 780px; }
+.editor-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--site-line); }
+.editor-tabs button { padding: 9px 14px; border: 0; border-bottom: 2px solid transparent; background: transparent; cursor: pointer; }
+.editor-tabs button.is-active { border-bottom-color: var(--site-red); color: var(--site-red-dark); }
+.editor-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.editor-actions--split { justify-content: flex-start; flex-wrap: wrap; }
+.editor-actions--split > .primary-button { margin-left: auto; }
+.editor-tools { display: flex; align-items: center; gap: 6px; }
+.editor-tool { display: grid; width: 34px; height: 34px; padding: 0; place-items: center; border: 1px solid var(--site-line-strong); border-radius: 50%; background: transparent; color: var(--site-red-dark); cursor: pointer; font: 700 16px/1 var(--han-font-sans, sans-serif); }
+.editor-tool:disabled { cursor: not-allowed; opacity: .45; }
+.markdown-preview { min-height: 180px; padding: 16px; border: 1px solid var(--site-line); background: var(--site-paper); line-height: 1.8; }
+.notification-list { display: grid; gap: 0; max-width: 800px; }
+.notification-row { display: flex; min-height: 66px; padding: 14px 0; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--site-line); cursor: pointer; }
+.notification-row.is-unread { border-left: 3px solid var(--site-red); padding-left: 12px; background: color-mix(in srgb, var(--site-paper) 52%, transparent); }
+.notification-row time { flex: 0 0 auto; color: var(--site-ink-soft); font-size: 11px; }
+
 .site-status {
   position: fixed;
   right: 22px;
@@ -1904,9 +1954,7 @@ input:focus {
 }
 
 @media (max-width: 760px) {
-  .site-actions .quiet-button {
-    display: none;
-  }
+  .site-actions .account-entry { display: inline-flex; min-height: 36px; padding-inline: 10px; font-size: 12px; }
 
   .site-actions .primary-button {
     min-height: 36px;
@@ -2281,7 +2329,7 @@ input:focus {
     font-size: 16px;
   }
 
-  .thread-content > p {
+.thread-content > p {
     display: -webkit-box;
     white-space: normal;
     -webkit-box-orient: vertical;
@@ -2359,16 +2407,112 @@ input:focus {
 
 .poem-handscroll {
   position: relative;
+  width: min(100%, 855px);
   min-width: 0;
-  margin: 5px 9px;
-  padding: 0 11px;
+  margin: 10px auto;
+  padding: 0 10px;
   container-name: poem-scroll;
   container-type: inline-size;
+}
+
+/* Header and responsive drawers */
+.site-header__inner { position: relative; grid-template-columns: auto minmax(0, 1fr) auto; }
+.site-brand { justify-self: start; }
+.site-nav { min-width: 0; }
+.nav-toggle { order: -1; width: 38px; height: 38px; padding: 8px; border: 0; background: transparent; }
+.nav-toggle span { display: block; width: 21px; height: 2px; margin: 4px auto; background: currentColor; }
+.account-entry { position: relative; display: inline-flex; min-width: 40px; min-height: 40px; padding: 0; align-items: center; gap: 8px; border: 0; background: transparent; cursor: pointer; }
+.account-entry__label { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.header-avatar { width: 34px; height: 34px; border: 2px solid var(--site-red); font-size: 14px; }
+.notification-badge { position: absolute; right: -4px; bottom: 0; display: grid; min-width: 17px; height: 17px; padding: 0 4px; place-items: center; border: 2px solid var(--site-surface); border-radius: 99px; background: #c4312f; color: #fff; font-size: 10px; font-weight: 700; line-height: 1; }
+.drawer-backdrop { position: fixed; inset: 0; z-index: 80; background: rgba(25, 22, 18, .32); opacity: 0; transition: opacity 180ms ease; }
+.drawer-backdrop.is-visible { opacity: 1; }
+.site-drawer { position: fixed; top: 0; bottom: 0; z-index: 90; width: min(360px, calc(100vw - 42px)); padding: 24px 22px; overflow-y: auto; background: var(--site-surface); box-shadow: 0 16px 42px rgba(25, 22, 18, .2); transition: transform 220ms ease; }
+.site-drawer--left { left: 0; transform: translateX(-102%); }
+.site-drawer--right { right: 0; transform: translateX(102%); }
+.site-drawer.is-open { transform: translateX(0); }
+.site-drawer__header { display: flex; min-height: 58px; padding-bottom: 18px; align-items: flex-start; justify-content: space-between; border-bottom: 1px solid var(--site-line); }
+.site-drawer__header h2 { margin-top: 2px; font-size: 26px; }
+.drawer-close { width: 34px; height: 34px; padding: 0; border: 0; background: transparent; cursor: pointer; font-size: 31px; font-weight: 300; line-height: 1; }
+.drawer-menu { display: grid; gap: 4px; padding: 22px 0; }
+.drawer-menu a, .drawer-menu button { display: flex; width: 100%; min-height: 54px; padding: 8px 10px; align-items: center; gap: 14px; border: 0; border-radius: 3px; background: transparent; color: var(--site-ink); cursor: pointer; font-size: 17px; text-align: left; }
+.drawer-menu a:hover, .drawer-menu button:hover { background: var(--site-paper-deep); }
+.drawer-menu__icon { display: inline-grid; width: 28px; height: 28px; place-items: center; color: var(--site-red); font-family: var(--han-font-song, serif); font-size: 16px; font-weight: 700; }
+.site-drawer__hint, .drawer-empty { padding: 14px 10px; color: var(--site-ink-soft); font-size: 13px; }
+.site-drawer__header--account { align-items: center; }
+.drawer-account { display: flex; align-items: center; gap: 12px; }
+.drawer-account .header-avatar { width: 42px; height: 42px; }
+.drawer-account strong, .drawer-account small { display: block; }
+.drawer-account strong { font-size: 18px; }
+.drawer-account small { color: var(--site-ink-soft); font-size: 12px; }
+.drawer-menu--account { padding-bottom: 12px; }
+.drawer-notifications { padding: 18px 0; border-top: 1px solid var(--site-line); border-bottom: 1px solid var(--site-line); }
+.drawer-section-heading { display: flex; padding: 0 10px 8px; align-items: center; justify-content: space-between; gap: 10px; }
+.drawer-section-heading h3 { font-size: 18px; }
+.drawer-section-heading a { color: var(--site-red-dark); font-size: 12px; }
+.drawer-notification { display: flex; width: 100%; min-height: 46px; padding: 8px 10px; align-items: center; justify-content: space-between; gap: 10px; border: 0; border-left: 3px solid transparent; background: transparent; cursor: pointer; text-align: left; }
+.drawer-notification:hover, .drawer-notification.is-unread { border-left-color: var(--site-red); background: color-mix(in srgb, var(--site-paper-deep) 45%, transparent); }
+.drawer-notification span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.drawer-notification time { flex: 0 0 auto; color: var(--site-ink-soft); font-size: 11px; }
+.site-drawer__footer { padding-top: 20px; }
+.drawer-signout { width: 100%; min-height: 42px; border: 1px solid var(--site-line-strong); background: transparent; cursor: pointer; font-size: 14px; }
+
+@media (min-width: 961px) {
+  .nav-toggle { display: none; }
+  .site-brand { grid-column: 1; }
+  .site-nav { grid-column: 2; }
+  .site-actions { grid-column: 3; }
+  .site-drawer, .drawer-backdrop { display: none !important; }
+  .account-entry__label { display: inline; }
+}
+
+@media (max-width: 960px) {
+  .site-header__inner { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .site-brand { justify-self: center; }
+  .site-nav { display: none; }
+  .site-actions { justify-self: end; }
+  .account-entry__label { display: none; }
+}
+
+@media (max-width: 520px) {
+  .site-header__inner { width: calc(100% - 18px); }
+  .header-avatar { width: 32px; height: 32px; }
+  .site-drawer { width: min(334px, calc(100vw - 26px)); padding-inline: 18px; }
+}
+
+/* Final navigation behavior overrides */
+body.has-open-drawer { overflow: hidden; }
+.account-entry__label { display: none !important; }
+.account-entry { width: 34px; min-width: 34px; height: 34px; min-height: 34px; padding: 0 !important; }
+.header-avatar { width: 27px; height: 27px; border-width: 1.5px; font-size: 11px; }
+.notification-badge { right: -5px; bottom: -3px; min-width: 14px; height: 14px; padding: 0 3px; border-width: 1px; font-size: 8px; }
+.site-drawer { visibility: hidden; pointer-events: none; }
+.site-drawer.is-open { visibility: visible; pointer-events: auto; }
+.drawer-backdrop { pointer-events: none; }
+.drawer-backdrop.is-visible { pointer-events: auto; }
+
+@media (min-width: 961px) {
+  .site-drawer--left { display: none !important; }
+  .site-drawer--right { display: block !important; width: min(390px, 38vw); }
+  .drawer-backdrop { display: block !important; }
+  .site-actions { min-width: 34px; }
+}
+
+@media (max-width: 960px) {
+  .site-drawer--left,
+  .site-drawer--right { display: block; }
+  .site-actions { min-width: 34px; }
+}
+
+@media (max-width: 520px) {
+  .account-entry { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
+  .header-avatar { width: 25px; height: 25px; font-size: 10px; }
+  .notification-badge { right: -4px; bottom: -3px; }
 }
 .poem-handscroll__paper {
   position: relative;
   display: grid;
-  min-height: 172px;
+  min-height: 0;
   overflow: hidden;
   border-block: 1px solid color-mix(in srgb, var(--site-line-strong) 58%, transparent);
   background-color: var(--site-surface);
@@ -2376,16 +2520,21 @@ input:focus {
   box-shadow: 0 8px 20px rgba(43, 39, 31, .08);
 }
 .poem-score {
+  position: absolute;
+  top: 8px;
+  right: 12px;
   display: grid;
-  padding: 10px 14px;
-  gap: 5px;
-  border-bottom: 1px solid var(--site-line);
+  min-width: 0;
+  padding: 0;
+  gap: 3px;
   color: var(--site-ink-soft);
   font-family: var(--han-font-sans, sans-serif);
   font-size: 10px;
+  text-align: right;
 }
+.poem-score__top { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 .poem-score__book { color: var(--site-red-dark); text-align: right; }
-.poem-score dl { display: flex; margin: 0; justify-content: flex-end; gap: 12px; }
+.poem-score dl { display: flex; margin: 0; justify-content: flex-end; gap: 8px; }
 .poem-score dl div { display: grid; grid-template-columns: auto auto; gap: 3px; }
 .poem-score dt { color: var(--site-ink-soft); }
 .poem-score dd { color: var(--site-ink); font-variant-numeric: tabular-nums; }
@@ -2418,25 +2567,30 @@ input:focus {
 .poem-handscroll__roller--left { left: 3px; }
 .poem-handscroll__roller--right { right: 3px; }
 .poem-handscroll__heading {
+  position: relative;
   display: grid;
-  padding: 24px 22px 18px;
+  min-height: 82px;
+  padding: 10px 14px;
   place-items: center;
   align-content: center;
-  gap: 7px;
+  gap: 2px;
   border-bottom: 1px solid var(--site-line);
   text-align: center;
 }
-.poem-handscroll__heading p { color: var(--site-ink-soft); font-size: 10px; }
-.poem-handscroll__heading h3 { font-family: var(--han-font-kai, serif); font-size: 24px; font-weight: 700; line-height: 1.35; }
-.poem-handscroll__seal { display: grid; width: 30px; height: 30px; margin-top: 3px; place-items: center; border: 1px solid var(--site-red); color: var(--site-red-dark); font-family: var(--han-font-kai, serif); font-size: 10px; line-height: 1.05; }
-.poem-handscroll__verses { display: grid; padding: 22px clamp(20px, 5cqi, 42px); align-content: center; gap: 15px; }
-.poem-handscroll__stanza { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px 28px; }
-.poem-handscroll__line { min-width: 0; color: var(--site-ink); font-family: var(--han-font-song, serif); font-size: 17px; line-height: 1.9; text-align: center; overflow-wrap: anywhere; }
-.poem-handscroll__footer { display: flex; min-height: 40px; padding: 6px 18px; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 14px; border-top: 1px solid var(--site-line); color: var(--site-ink-soft); font-size: 10px; }
+.poem-handscroll__heading > p { margin: 0; color: var(--site-ink-soft); font-size: 10px; text-align: center; }
+.poem-handscroll__heading h3 { margin: 0; font-family: var(--han-font-kai, serif); font-size: 22px; font-weight: 700; line-height: 1.3; text-align: center; }
+.poem-handscroll__seal { position: absolute; top: 50%; left: 14px; display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--site-red); color: var(--site-red-dark); font-family: var(--han-font-kai, serif); font-size: 10px; line-height: 1.05; transform: translateY(-50%); }
+.poem-handscroll__verses { display: grid; min-height: 150px; padding: 14px clamp(14px, 3cqi, 24px); align-content: center; gap: 0; }
+.poem-handscroll__stanza { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; }
+.poem-handscroll__line { min-width: 0; color: var(--site-ink); font-family: var(--han-font-song, serif); font-size: 17px; line-height: 1.65; text-align: center; overflow-wrap: anywhere; }
+.poem-handscroll__footer { display: grid; min-height: 34px; padding: 4px 12px; grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; border-top: 1px solid var(--site-line); color: var(--site-ink-soft); font-size: 10px; }
 .poem-handscroll__footer--score { position: relative; }
+.poem-handscroll__footer > time { min-width: 0; line-height: 1.35; overflow-wrap: anywhere; }
+.poem-handscroll__footer-actions { display: flex; min-width: 0; grid-column: 2; align-items: center; justify-content: flex-end; gap: 5px; flex-wrap: wrap; }
+.poem-handscroll__footer > time { grid-column: 1; }
 .poem-score__inspect { border: 0; background: transparent; color: var(--site-red-dark); cursor: pointer; font: inherit; font-weight: 700; }
 .poem-score__inspect:disabled { color: var(--site-ink-soft); cursor: default; }
-.poem-score__flags { display: flex; margin-left: auto; gap: 5px; }
+.poem-score__flags { display: flex; grid-column: 3; justify-content: flex-end; gap: 4px; }
 .poem-score__flag { position: relative; display: grid; width: 25px; height: 25px; padding: 0; place-items: center; border: 1px solid var(--site-line-strong); border-radius: 50%; background: var(--site-paper); color: var(--site-ink); cursor: help; font-family: var(--han-font-sans, sans-serif); font-size: 13px; }
 .poem-score__flag:disabled { cursor: default; opacity: .42; }
 .poem-score__tooltip { position: absolute; z-index: 8; right: 0; bottom: calc(100% + 8px); display: none; width: min(320px, 75vw); padding: 9px 11px; border: 1px solid var(--site-line-strong); background: var(--site-surface); box-shadow: 0 8px 20px rgba(43, 39, 31, .15); color: var(--site-ink); font-size: 11px; line-height: 1.6; text-align: left; }
@@ -2444,16 +2598,57 @@ input:focus {
 .poem-score__flag:not(:disabled):hover .poem-score__tooltip,
 .poem-score__flag:not(:disabled):focus-visible .poem-score__tooltip { display: block; }
 .poem-handscroll--ci .poem-handscroll__verses { max-width: 680px; width: 100%; margin-inline: auto; }
-.poem-handscroll--ci .poem-handscroll__line { text-align: left; }
+.poem-handscroll--ci .poem-handscroll__line { text-align: center; }
 
 @container poem-scroll (min-width: 560px) {
-  .poem-handscroll__paper { grid-template-columns: minmax(118px, 23%) minmax(0, 1fr); }
-  .poem-handscroll__heading { border-right: 1px solid var(--site-line); border-bottom: 0; }
-  .poem-score { position: absolute; z-index: 1; top: 0; right: 0; border-bottom: 0; }
-  .poem-handscroll__verses { padding-top: 54px; }
-  .poem-handscroll__footer { grid-column: 1 / -1; }
-  .poem-handscroll:not(.poem-handscroll--ci) .poem-handscroll__stanza { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .poem-handscroll--paired .poem-handscroll__stanza { grid-template-columns: repeat(2, max-content); justify-content: center; gap: 0; }
 }
+
+@container poem-scroll (max-width: 560px) {
+  .poem-score {
+    max-width: 132px;
+    gap: 1px;
+    font-size: 9px;
+    line-height: 1.15;
+  }
+  .poem-score__top { align-items: flex-end; gap: 2px; }
+  .poem-score__book { max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .poem-score dl { display: grid; justify-items: end; gap: 1px; }
+  .poem-score dl div { display: flex; align-items: baseline; justify-content: flex-end; gap: 3px; white-space: nowrap; }
+}
+
+.poem-handscroll--vertical {
+  width: min(82vw, 360px);
+  max-width: calc(100% - 32px);
+  margin: 12px auto;
+  padding: 8px 0;
+}
+.poem-handscroll--vertical .poem-handscroll__paper {
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  border: 1px solid color-mix(in srgb, var(--site-line-strong) 58%, transparent);
+  border-block: 0;
+  background-image: linear-gradient(180deg, rgba(108, 92, 65, .035), transparent 22%, transparent 78%, rgba(108, 92, 65, .035));
+}
+.poem-handscroll--vertical .poem-handscroll__heading { min-height: 78px; padding: 8px 10px; border-right: 0; border-bottom: 1px solid var(--site-line); gap-inline: 7px; }
+.poem-handscroll--vertical .poem-score { min-width: 0; }
+.poem-handscroll--vertical .poem-handscroll__verses { min-height: 140px; padding: 12px 16px; }
+.poem-handscroll--vertical .poem-handscroll__stanza { grid-template-columns: minmax(0, 1fr) !important; }
+.poem-handscroll--vertical .poem-handscroll__roller {
+  right: -5px;
+  left: -5px;
+  width: auto;
+  height: 13px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #312f2b, #5b574f 44%, #2b2926);
+  box-shadow: 0 2px 6px rgba(43, 39, 31, .18);
+}
+.poem-handscroll--vertical .poem-handscroll__roller--left { top: 3px; bottom: auto; }
+.poem-handscroll--vertical .poem-handscroll__roller--right { top: auto; bottom: 3px; }
+.poem-handscroll--vertical .poem-handscroll__roller::before,
+.poem-handscroll--vertical .poem-handscroll__roller::after { top: 50%; width: 7px; height: 19px; transform: translateY(-50%); }
+.poem-handscroll--vertical .poem-handscroll__roller::before { left: -4px; }
+.poem-handscroll--vertical .poem-handscroll__roller::after { right: -4px; left: auto; }
 
 .prosody-inspector[hidden] { display: none; }
 .prosody-inspector {
@@ -2506,20 +2701,228 @@ input:focus {
   .job-progress > summary { margin-inline: -12px; padding-inline: 12px; }
   .job-progress__candidate > summary { grid-template-columns: auto 1fr auto; gap: 7px; }
   .job-progress__candidate-attempt { grid-column: 2 / -1; text-align: left; }
-  .poem-handscroll { margin-inline: 5px; padding-inline: 9px; }
-  .poem-handscroll__paper { min-height: 0; }
-  .poem-handscroll__heading { padding-block: 18px 14px; }
-  .poem-handscroll__heading h3 { font-size: 21px; }
-  .poem-handscroll__verses { padding-block: 18px; }
+  .poem-handscroll__heading h3 { font-size: 20px; }
   .poem-handscroll__line { font-size: 16px; }
-  .poem-handscroll__footer { align-items: flex-start; flex-direction: column; }
-  .poem-score { text-align: left; }
-  .poem-score__book { text-align: left; }
-  .poem-score dl { justify-content: flex-start; }
-  .poem-score__flags { position: absolute; right: 12px; bottom: 7px; }
-  .poem-card__actions { width: 100%; justify-content: flex-end; }
+  .poem-handscroll__footer { align-items: start; }
+  .poem-score__flags { justify-content: flex-end; }
+  .poem-handscroll__footer-actions { justify-content: flex-end; }
+  .poem-card__actions { width: auto; justify-content: flex-end; }
   .proposal-editor__config { grid-template-columns: 1fr; }
   .proposal-editor__actions { align-items: stretch; flex-direction: column; }
   .proposal-editor__actions .primary-button { width: 100%; }
   .prosody-inspector { top: 60px; }
+}
+.forum-dialog { width: min(760px, calc(100% - 32px)); max-height: calc(100svh - 32px); overflow: auto; }
+.forum-dialog textarea, .account-form textarea { width: 100%; resize: vertical; }
+.thread-row { cursor: pointer; }
+.thread-row:focus-visible { outline: 2px solid var(--site-red); outline-offset: 3px; }
+.thread-detail__byline { margin: 8px 0 0; color: var(--site-ink-soft); font-size: 13px; }
+.thread-detail__body { margin-bottom: 24px; border-block: 1px solid var(--site-line); padding: 22px 4px; white-space: pre-wrap; line-height: 1.9; }
+.thread-detail__replies-heading { margin: 0 0 12px; font-size: 18px; }
+.thread-detail__replies { display: grid; max-height: 290px; overflow: auto; }
+.thread-detail__reply { border-top: 1px solid var(--site-line); padding: 14px 4px; }
+.thread-detail__reply strong { color: var(--site-red-dark); font-size: 12px; }
+.thread-detail__reply p { margin: 7px 0 0; white-space: pre-wrap; line-height: 1.7; }
+.admin-shell { min-height: calc(100svh - 130px); }
+.admin-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-bottom: 28px; }
+.admin-stat { border-left: 2px solid var(--site-red); background: var(--site-paper-deep); padding: 16px; }
+.admin-stat strong, .admin-stat span { display: block; }
+.admin-stat strong { font-family: var(--han-font-song, serif); font-size: 28px; }
+.admin-stat span { margin-top: 4px; color: var(--site-ink-soft); font-size: 12px; }
+.admin-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(280px, .75fr); gap: 30px; }
+.admin-table-wrap { overflow-x: auto; }
+.admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.admin-table th, .admin-table td { border-bottom: 1px solid var(--site-line); padding: 12px 8px; text-align: left; }
+.admin-table th { color: var(--site-ink-soft); font-weight: 500; }
+.admin-table select { border: 1px solid var(--site-line); background: var(--site-surface); padding: 6px 8px; color: var(--site-ink); }
+.text-button { border: 0; background: transparent; color: var(--site-red-dark); cursor: pointer; font: inherit; }
+.text-button:hover { text-decoration: underline; }
+.admin-report { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--site-line); padding: 14px 0; }
+.admin-side-stack { display: grid; gap: 30px; align-content: start; }
+.admin-section-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin-bottom: 10px; }
+.admin-section-form input { min-width: 0; border: 1px solid var(--site-line); background: var(--site-surface); padding: 8px 10px; color: var(--site-ink); font: inherit; }
+.follow-list + .follow-list { margin-top: 20px; border-top: 1px solid var(--site-line); padding-top: 8px; }
+.account-form + .account-form { margin-top: 30px; border-top: 1px solid var(--site-line); padding-top: 24px; }
+
+@media (max-width: 900px) {
+  .admin-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-layout { grid-template-columns: 1fr; }
+  .admin-section-form { grid-template-columns: 1fr; }
+}
+.thread-tags { margin-top: 8px; color: var(--site-red-dark); font-size: 12px; }
+.forum-pagination { display: flex; min-height: 56px; padding: 18px 0; align-items: center; justify-content: center; gap: 12px; }
+.forum-pagination span { color: var(--site-ink-soft); font-size: 12px; }
+
+@media (max-width: 600px) {
+  .forum-dialog { width: calc(100% - 20px); padding: 20px; }
+  .admin-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .thread-stats { display: none; }
+}
+
+/* Content-first forum layout */
+.forum-shell { width: min(1440px, calc(100% - 48px)); }
+.forum-layout { grid-template-columns: 210px minmax(0, 1fr) 250px; gap: 22px; align-items: start; }
+.forum-section-rail { position: sticky; top: 92px; padding: 30px 20px 24px 0; border-right: 1px solid var(--site-line); }
+.forum-section-rail > p { margin-top: 20px; color: var(--site-ink-soft); font-size: 12px; line-height: 1.75; }
+.forum-section-rail .forum-categories { display: grid; margin-top: 18px; gap: 5px; }
+.forum-section-rail .forum-categories button { width: 100%; padding-inline: 10px; border-left: 2px solid transparent; border-bottom: 0; text-align: left; }
+.forum-section-rail .forum-categories button[aria-pressed="true"] { border-left-color: var(--site-red); background: color-mix(in srgb, var(--site-paper) 70%, transparent); }
+.thread-list { min-width: 0; background: var(--site-surface); }
+.thread-row { min-height: 150px; padding: 22px 24px; grid-template-columns: 46px minmax(0, 1fr) 80px; align-items: start; transition: background-color .16s ease; }
+.thread-row:hover { background: color-mix(in srgb, var(--site-paper) 44%, var(--site-surface)); }
+.thread-row--featured { border-left: 2px solid var(--site-red); }
+.thread-avatar, .thread-mark, .thread-author-avatar, .thread-reply-avatar, .user-avatar { overflow: hidden; border-radius: 50%; background: var(--site-paper-deep); }
+.thread-avatar img, .thread-author-avatar img, .thread-reply-avatar img, .user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.thread-content h2 { margin: 7px 0 3px; font-size: 19px; }
+.thread-content > p { max-width: 68ch; white-space: nowrap; }
+.thread-meta { justify-content: flex-start; }
+.thread-stats { padding-top: 22px; }
+.thread-stats strong { font-size: 20px; }
+.thread-stats span { margin-top: 4px; line-height: 1.5; }
+.forum-aside { position: sticky; top: 92px; margin-top: 30px; padding: 22px; border: 1px solid var(--site-line); background: var(--site-surface); }
+
+.forum-thread-view { background: var(--site-paper); }
+.forum-thread-shell { max-width: 780px; background: var(--site-surface); padding: 26px 48px 68px; }
+.thread-page-heading { padding-top: 10px; }
+.thread-author-row { display: flex; align-items: center; gap: 12px; }
+.thread-author-avatar, .thread-reply-avatar { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; border: 1px solid var(--site-line); color: var(--site-red-dark); }
+.thread-author-row > div:last-child { display: grid; }
+.thread-author-row strong { font-size: 14px; }
+.thread-author-row span { color: var(--site-ink-soft); font-size: 11px; }
+.thread-page-heading h1 { margin-top: 24px; font-size: 32px; line-height: 1.4; }
+.thread-post--main { min-height: 210px; padding: 32px 0; font-size: 16px; }
+.thread-detail__replies { max-height: none; overflow: visible; }
+.thread-detail__replies-heading { margin-top: 36px; padding-bottom: 14px; border-bottom: 2px solid var(--site-red); }
+.thread-detail__reply { display: grid; padding: 24px 0; grid-template-columns: 44px minmax(0, 1fr); gap: 16px; border-top: 0; border-bottom: 1px solid var(--site-line); }
+.thread-reply-body { min-width: 0; }
+.thread-reply-content { min-height: 44px; line-height: 1.75; }
+.thread-reply-content .poem-handscroll { margin-top: 16px; }
+.thread-reply-actions { justify-content: flex-start; }
+.thread-reply-form { padding: 22px; background: var(--site-paper); }
+
+.user-avatar { display: grid; place-items: center; color: var(--site-red-dark); font-family: var(--han-font-kai, serif); }
+.user-avatar--large { width: 88px; height: 88px; flex: 0 0 auto; border: 1px solid var(--site-line-strong); font-size: 28px; }
+.avatar-editor { display: flex; align-items: center; gap: 20px; }
+.avatar-editor > div:last-child { display: grid; justify-items: start; gap: 8px; }
+.avatar-editor small { color: var(--site-ink-soft); }
+.profile-form-actions { display: flex; align-items: center; gap: 10px; }
+.avatar-crop-dialog { width: min(430px, calc(100% - 32px)); max-width: 100%; padding: 0; border: 1px solid var(--site-line-strong); background: var(--site-paper); color: var(--site-ink); }
+.avatar-crop-dialog::backdrop { background: rgba(28, 25, 21, .46); backdrop-filter: blur(2px); }
+.avatar-crop-shell { display: grid; gap: 18px; padding: 22px; }
+.avatar-crop-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; border-bottom: 1px solid var(--site-line); padding-bottom: 14px; }
+.avatar-crop-heading h2 { margin-top: 4px; font-size: 22px; }
+.avatar-crop-preview { position: relative; display: grid; width: min(320px, 100%); aspect-ratio: 1; margin-inline: auto; place-items: center; overflow: hidden; border: 1px solid var(--site-line-strong); background: var(--site-ink); cursor: grab; touch-action: none; }
+.avatar-crop-preview:active { cursor: grabbing; }
+.avatar-crop-preview::after { position: absolute; inset: 8px; border: 2px solid rgba(255, 255, 255, .88); border-radius: 50%; box-shadow: 0 0 0 999px rgba(28, 25, 21, .32); content: ""; pointer-events: none; }
+.avatar-crop-preview canvas { display: block; width: 100%; height: 100%; }
+.avatar-crop-zoom { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; color: var(--site-ink-soft); font-size: 12px; }
+.avatar-crop-zoom input { min-width: 0; accent-color: var(--site-red); }
+.avatar-crop-zoom output { min-width: 42px; color: var(--site-ink); text-align: right; font-variant-numeric: tabular-nums; }
+.avatar-crop-hint { margin: -8px 0 0; color: var(--site-ink-soft); font-size: 12px; }
+.avatar-crop-actions { display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--site-line); padding-top: 14px; }
+
+.poem-picker-dialog { width: min(920px, calc(100% - 32px)); max-height: calc(100svh - 32px); padding: 0; border: 1px solid var(--site-line-strong); background: var(--site-paper); color: var(--site-ink); }
+.poem-picker-dialog::backdrop, .confirm-dialog::backdrop { background: rgba(28, 25, 21, .46); backdrop-filter: blur(2px); }
+.poem-picker-shell { display: grid; max-height: calc(100svh - 34px); grid-template-rows: auto auto auto minmax(280px, 1fr) auto; }
+.poem-picker-header, .poem-picker-footer { display: flex; min-height: 72px; padding: 14px 22px; align-items: center; justify-content: space-between; gap: 16px; background: var(--site-surface); }
+.poem-picker-header { border-bottom: 1px solid var(--site-line); }
+.poem-picker-header h2 { font-size: 21px; }
+.icon-button { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 1px solid var(--site-line); border-radius: 50%; background: transparent; cursor: pointer; font-size: 22px; }
+.poem-picker-tabs { display: flex; padding: 0 22px; border-bottom: 1px solid var(--site-line); background: var(--site-surface); }
+.poem-picker-tabs button { padding: 11px 15px; border: 0; border-bottom: 2px solid transparent; background: transparent; cursor: pointer; }
+.poem-picker-tabs button[aria-selected="true"] { border-bottom-color: var(--site-red); color: var(--site-red-dark); }
+.poem-picker-search { display: grid; padding: 12px 22px; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; border-bottom: 1px solid var(--site-line); background: var(--site-surface); color: var(--site-ink-soft); font-size: 12px; }
+.poem-picker-search input { min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--site-line-strong); background: var(--site-paper); color: var(--site-ink); font: inherit; }
+.poem-picker-list { min-height: 0; padding: 0 24px; overflow: hidden; }
+.poem-picker-wheel { height: 100%; min-height: 300px; padding: 28px 6px; overflow-y: auto; overscroll-behavior: contain; scroll-snap-type: y mandatory; scrollbar-gutter: stable; }
+.poem-picker-option { min-height: 280px; margin: 0 0 20px; padding: 10px; scroll-snap-align: center; opacity: .72; cursor: pointer; transition: opacity .16s ease, background-color .16s ease; }
+.poem-picker-option:hover, .poem-picker-option:focus-visible, .poem-picker-option[aria-pressed="true"] { opacity: 1; background: color-mix(in srgb, var(--site-paper-deep) 70%, transparent); outline: none; }
+.poem-picker-option[aria-pressed="true"] { box-shadow: inset 3px 0 var(--site-red); }
+.poem-picker-option .poem-handscroll { width: min(100%, 720px); margin-inline: auto; }
+.poem-picker-footer { border-top: 1px solid var(--site-line); }
+.poem-picker-footer span { color: var(--site-ink-soft); font-size: 12px; }
+.editor-poem-preview { padding: 12px; border: 1px solid var(--site-line); background: var(--site-paper); }
+
+.public-profile-view { min-height: calc(100svh - 66px); padding: 42px 0 76px; background: var(--site-surface); }
+.public-profile-heading { display: flex; padding: 22px 0 30px; align-items: center; gap: 22px; border-bottom: 1px solid var(--site-line-strong); }
+.public-profile-heading h1 { margin: 3px 0 6px; font-family: var(--han-font-kai, serif); font-size: 32px; }
+.public-profile-signature { margin: 0; line-height: 1.7; }
+.public-profile-meta { margin: 7px 0 0; color: var(--site-ink-soft); font-size: 12px; }
+.public-profile-section { padding: 26px 0; border-bottom: 1px solid var(--site-line); }
+.public-profile-section > h2 { margin-bottom: 16px; font-size: 18px; }
+.public-profile-section > .poem-handscroll { max-width: 780px; }
+.public-activity-list { display: grid; }
+.public-activity-list a { display: grid; padding: 13px 4px; gap: 5px; border-bottom: 1px solid var(--site-line); }
+.public-activity-list a:hover strong { color: var(--site-red-dark); }
+.public-activity-list span { color: var(--site-ink-soft); font-size: 12px; line-height: 1.6; }
+
+.conversation-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; }
+.conversation-archive { padding-inline: 7px !important; color: var(--site-ink-soft); font-size: 11px !important; }
+
+@media (max-width: 1040px) {
+  .forum-layout { grid-template-columns: 180px minmax(0, 1fr); }
+  .forum-aside { display: none; }
+}
+
+@media (max-width: 760px) {
+  .forum-shell { width: min(100% - 24px, 1440px); }
+  .forum-layout { grid-template-columns: 1fr; }
+  .forum-section-rail { position: static; padding: 18px 0; border-right: 0; border-bottom: 1px solid var(--site-line); }
+  .forum-section-rail .forum-categories { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .thread-row { padding: 18px 14px; grid-template-columns: 38px minmax(0, 1fr); }
+  .forum-thread-shell { width: 100%; padding: 20px 18px 50px; }
+  .thread-page-heading h1 { font-size: 26px; }
+  .thread-reply-floor { border-bottom: 1px solid var(--site-line); }
+  .thread-reply-floor--nested { margin-left: 20px; padding-left: 10px; }
+  .thread-reply-summary { display: flex; min-height: 58px; padding: 10px 2px; align-items: center; gap: 10px; cursor: pointer; list-style: none; }
+  .thread-reply-summary::-webkit-details-marker { display: none; }
+  .thread-reply-summary::after { margin-left: auto; color: var(--site-ink-soft); content: "+"; font-size: 18px; }
+  .thread-reply-floor[open] > .thread-reply-summary::after { content: "−"; }
+  .thread-reply-summary span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .thread-reply-summary .thread-reply-avatar { width: 32px; height: 32px; }
+  .thread-detail__reply { padding-top: 10px; grid-template-columns: 36px minmax(0, 1fr); gap: 10px; border-bottom: 0; }
+  .thread-reply-avatar { width: 36px; height: 36px; }
+  .thread-reply-actions { flex-wrap: wrap; }
+  .thread-reply-content .poem-handscroll { margin-inline: auto; }
+  .poem-picker-list { padding: 0 5px; }
+  .poem-picker-wheel { padding-inline: 0; }
+  .poem-picker-option { padding-inline: 0; }
+  .poem-picker-header, .poem-picker-footer { padding-inline: 14px; }
+  .poem-picker-tabs, .poem-picker-search { padding-inline: 14px; }
+  .poem-handscroll--paired .poem-handscroll__stanza { grid-template-columns: repeat(2, max-content) !important; justify-content: center; gap: 0; }
+  .public-profile-heading { align-items: flex-start; }
+  .public-profile-heading .user-avatar--large { width: 64px; height: 64px; }
+  .avatar-editor { align-items: flex-start; flex-direction: column; }
+}
+
+@media (max-width: 360px) {
+  .poem-handscroll__footer { grid-template-columns: minmax(0, 1fr) auto; }
+  .poem-handscroll__footer-actions { grid-column: 1; grid-row: 1; justify-content: flex-start; }
+  .poem-handscroll__footer > time { grid-column: 1; grid-row: 2; max-width: none; }
+  .poem-score__flags { grid-column: 2; grid-row: 1; }
+  .avatar-crop-shell { padding: 18px; }
+}
+
+.thread-reply-mobile-node { min-width: 0; border-bottom: 1px solid var(--site-line); }
+.thread-reply-mobile-node--nested { margin-left: 14px; border-bottom: 0; border-left: 2px solid color-mix(in srgb, var(--site-red) 28%, var(--site-line)); padding-left: 12px; }
+.thread-reply-mobile-children { margin: -2px 0 16px 58px; padding: 10px 12px 11px; background: color-mix(in srgb, var(--site-paper-deep) 65%, var(--site-surface)); }
+.thread-reply-mobile-children--expanded { display: grid; margin-top: 0; margin-bottom: 0; padding: 0; background: transparent; }
+.thread-reply-mobile-preview { display: grid; gap: 2px; }
+.thread-reply-preview { display: grid; gap: 3px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--site-line) 72%, transparent); }
+.thread-reply-preview:last-child { border-bottom: 0; }
+.thread-reply-preview strong { color: var(--site-red-dark); font-size: 12px; font-weight: 600; }
+.thread-reply-preview p { margin: 0; overflow: hidden; color: var(--site-ink); font-size: 13px; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
+.thread-reply-preview__stats { color: var(--site-ink-soft); font-size: 10px; }
+.thread-reply-mobile-more { width: fit-content; margin-top: 7px; padding: 0; border: 0; background: transparent; color: var(--site-red-dark); cursor: pointer; font: inherit; font-size: 12px; }
+.thread-reply-mobile-more::after { margin-left: 4px; content: "›"; font-size: 16px; vertical-align: -1px; }
+
+@media (min-width: 761px) {
+  .thread-reply-mobile-node { display: none; }
+}
+
+@media (max-width: 760px) {
+  .thread-reply-mobile-node .thread-detail__reply { padding: 18px 0 12px; border-bottom: 0; }
+  .thread-reply-mobile-node .thread-detail__reply .thread-reply-content { min-height: 0; }
+  .thread-reply-mobile-node--nested .thread-detail__reply { padding-top: 14px; }
+  .thread-reply-mobile-children .thread-reply-mobile-node .thread-reply-mobile-children { margin-left: 22px; }
 }

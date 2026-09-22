@@ -16,7 +16,6 @@ router = APIRouter(prefix="/v1/conversations", tags=["conversations"])
 @router.get("")
 def list_conversations(request: Request, authorization: str | None = Header(default=None), include_deleted: bool = False, sort: str = "updated"):
     user = current_user(request, authorization)
-    request.app.state.users.purge_expired_conversations()
     return {"items": request.app.state.users.list_conversations(user["id"], include_deleted=include_deleted, sort=sort)}
 
 
@@ -95,13 +94,6 @@ def restore_conversation(conversation_id: str, request: Request, authorization: 
     user = current_user(request, authorization)
     if not request.app.state.users.restore_conversation(conversation_id, user["id"]): raise HTTPException(status_code=404, detail="conversation not found")
     return {"status": "restored"}
-
-
-@router.delete("/{conversation_id}/permanent")
-def permanent_delete_conversation(conversation_id: str, request: Request, authorization: str | None = Header(default=None)):
-    user = current_user(request, authorization)
-    if not request.app.state.users.purge_conversation(conversation_id, user["id"]): raise HTTPException(status_code=404, detail="conversation not found")
-    return {"status": "deleted"}
 
 
 @router.get("/{conversation_id}/state")

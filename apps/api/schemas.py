@@ -50,10 +50,137 @@ class LoginModel(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class RegisterModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=2, max_length=64, pattern=r"^[A-Za-z0-9_\-\u4e00-\u9fff]+$")
+    password: str = Field(min_length=8, max_length=128)
+    display_name: str | None = Field(default=None, max_length=80)
+
+
+class PasswordResetRequestModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=1, max_length=64)
+
+
+class PasswordResetConfirmModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(min_length=16, max_length=256)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class ChangePasswordModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
     old_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
+
+
+class ProfilePatchModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: str | None = Field(default=None, max_length=80)
+    bio: str | None = Field(default=None, max_length=500)
+    notify_on_reaction: bool | None = None
+
+
+class ForumThreadCreateModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=30000)
+    tags: list[str] = Field(default_factory=list, max_length=12)
+    poem_ids: list[str] = Field(default_factory=list, max_length=8)
+
+
+class ForumThreadPatchModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    content: str | None = Field(default=None, min_length=1, max_length=30000)
+    is_pinned: bool | None = None
+    is_locked: bool | None = None
+    is_featured: bool | None = None
+    section_id: str | None = None
+    tags: list[str] | None = Field(default=None, max_length=12)
+
+
+class ForumReplyCreateModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    content: str = Field(min_length=1, max_length=20000)
+    parent_reply_id: str | None = None
+    quoted_reply_id: str | None = None
+    poem_ids: list[str] = Field(default_factory=list, max_length=8)
+
+
+class ForumReplyPatchModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    content: str = Field(min_length=1, max_length=20000)
+
+
+class ForumReportModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=1000)
+    thread_id: str | None = None
+    reply_id: str | None = None
+
+
+class ForumReactionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reaction_type: str = Field(pattern="^(like|question)$")
+
+
+class ForumDraftModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: str = Field(pattern="^(thread|reply)$")
+    thread_id: str | None = None
+    section_id: str | None = None
+    title: str = Field(default="", max_length=200)
+    content: str = Field(default="", max_length=30000)
+    tags: list[str] = Field(default_factory=list, max_length=12)
+
+
+class ModeratorModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: str
+
+
+class AdminUserCreateModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=8, max_length=128)
+    display_name: str | None = Field(default=None, max_length=80)
+    role: str = Field(default="user", pattern="^(user|admin)$")
+
+
+class AdminUserPatchModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: str | None = Field(default=None, max_length=80)
+    bio: str | None = Field(default=None, max_length=500)
+    role: str | None = Field(default=None, pattern="^(user|admin)$")
+
+
+class ForumSectionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=80)
+    slug: str = Field(min_length=1, max_length=80, pattern="^[a-z0-9][a-z0-9-]*$")
+    description: str = Field(default="", max_length=500)
+    sort_order: int = Field(default=0, ge=0, le=10000)
+
+
+class ForumSectionPatchModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    slug: str | None = Field(default=None, min_length=1, max_length=80, pattern="^[a-z0-9][a-z0-9-]*$")
+    description: str | None = Field(default=None, max_length=500)
+    sort_order: int | None = Field(default=None, ge=0, le=10000)
+    is_locked: bool | None = None
+
+
+class PermissionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    permission: str = Field(pattern="^(none|read|write|moderate)$")
+
+
+class ReportResolutionModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: str = Field(pattern="^(resolved|dismissed)$")
+    note: str = Field(default="", max_length=1000)
 
 
 class ConversationCreateModel(BaseModel):
@@ -85,6 +212,7 @@ class PoemPatchModel(BaseModel):
     work_type: str | None = Field(default=None, max_length=32)
     meter_type: str | None = Field(default=None, max_length=64)
     form_name: str | None = Field(default=None, max_length=128)
+    is_public: bool | None = None
 
 
 class CollectionCreateModel(BaseModel):

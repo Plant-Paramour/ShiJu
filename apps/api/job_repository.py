@@ -380,7 +380,7 @@ class JobRepository:
         candidates = self.candidates(job_id)
         total = len(candidates) or int(job.request.get("candidate_count", 0) or 0)
         completed = sum(1 for item in candidates if item["status"] == "succeeded")
-        return {"job_id": job_id, "kind": job.kind, "status": job.status, "total": total, "completed": completed,
+        return {"job_id": job_id, "kind": job.kind, "status": job.status, "created_at": job.created_at, "total": total, "completed": completed,
                 "request": job.request, "candidates": candidates, "result": job.result, "error": job.to_dict()["error"]}
 
     def has_live_worker(self, *, max_age_seconds: int = 45) -> bool:

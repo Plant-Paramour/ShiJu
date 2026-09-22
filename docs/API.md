@@ -1,6 +1,6 @@
 # 诗矩接口文档
 
-本文档描述当前仓库实际提供的 Python 生成接口和 JavaScript 格律检查接口。项目目前不包含 HTTP JSON 服务、命令行参数解析器或持久化数据库。
+本文档描述当前仓库的 Python 生成接口、JavaScript 格律检查接口，以及 `apps.api` 提供的 HTTP JSON 控制面。HTTP 服务包含登录、会话、诗作归档和论坛/管理员 API；生成任务仍由独立 Worker 执行。
 
 ## 1. 快速开始
 
