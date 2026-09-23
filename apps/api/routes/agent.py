@@ -102,10 +102,10 @@ def chat_stream(body: AgentChatModel, request: Request, authorization: str | Non
             started = events.append_agent_event(turn_id, "turn.started", {"conversation_id": conversation_id})
             yield f"id: {started['seq']}\nevent: turn.started\ndata: {json.dumps(started['payload'], ensure_ascii=False)}\n\n"
             if hasattr(service, "respond_stream"):
-                stream_events = service.respond_stream(body.message, conversation_id or body.session_id, history=history, user_id=user["id"] if user else None, conversation_id=conversation_id)
+                stream_events = service.respond_stream(body.message, conversation_id or body.session_id, history=history, user_id=user["id"] if user else None, conversation_id=conversation_id, model=body.model)
             else:
                 try:
-                    result = service.respond(body.message, conversation_id or body.session_id, history=history, user_id=user["id"] if user else None, conversation_id=conversation_id)
+                    result = service.respond(body.message, conversation_id or body.session_id, history=history, user_id=user["id"] if user else None, conversation_id=conversation_id, model=body.model)
                 except TypeError:
                     result = service.respond(body.message, conversation_id or body.session_id)
                 stream_events = iter((
@@ -199,6 +199,7 @@ def chat(
                 history=history,
                 user_id=user["id"] if user else None,
                 conversation_id=conversation_id,
+                model=body.model,
             )
         except TypeError:
             result = service.respond(body.message, conversation_id or body.session_id)

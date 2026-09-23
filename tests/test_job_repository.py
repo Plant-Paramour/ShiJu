@@ -135,3 +135,24 @@ def test_succeeded_candidate_is_archived_and_evaluation_is_persisted(tmp_path):
     assert snapshot["request"]["theme"] == "春山"
     assert snapshot["candidates"][0]["evaluation"] == evaluation
     assert poems[0]["evaluation"] == evaluation
+
+
+def test_archived_poem_evaluation_survives_missing_candidate_row(tmp_path):
+    repository, _ = _repository(tmp_path)
+    with repository.database.connect() as connection:
+        connection.execute(
+            "INSERT INTO users(id, username, password_hash, display_name) VALUES ('user-1', 'poet', 'unused', 'Poet')"
+        )
+    job = repository.submit("generate", {"meter_type": "宋词", "form_name": "浣溪沙"}, user_id="user-1")
+    with repository.database.connect() as connection:
+        connection.execute(
+            "INSERT INTO poems(id,user_id,job_id,title,content,meter_type,form_name,created_at,work_type,candidate_ordinal) "
+            "VALUES ('poem-1','user-1',?,'浣溪沙','一曲新词','宋词','浣溪沙',1000,'宋词',1)",
+            (job.id,),
+        )
+
+    evaluation = {"version": 1, "structure_score": 100}
+    repository.save_candidate_evaluation(job.id, 1, evaluation, user_id="user-1")
+
+    from apps.api.user_repository import UserRepository
+    assert UserRepository(repository.database).list_poems("user-1")[0]["evaluation"] == evaluation

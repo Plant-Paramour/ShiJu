@@ -1,9 +1,9 @@
 # 端点密钥只通过环境变量注入，配置文件不得保存明文 Key。
 [[endpoints]]
-provider_id = "primary-openai-compatible"
-base_url = "https://provider.example.com/v1"
-model = "model-name"
-secret_ref = "SHIJU_LLM_PRIMARY_KEY"
+provider_id = "api-1"
+base_url = "https://api.zscc.in/v1" # URL
+secret_ref = "SHIJU_LLM_API_1_KEY" # Key 的环境变量名
+models = ["deepseek-v3.2-guiji-cc", "deepseek-v4-flash-nv-cc", "Qwen/Qwen3.5-9B", "Qwen/Qwen3.6-27B"]
 tier = "primary"
 priority = 10
 weight = 1
@@ -14,11 +14,11 @@ supports_stream = true
 cost_level = "standard"
 
 [[endpoints]]
-provider_id = "secondary-openai-compatible"
-base_url = "https://backup.example.com/v1"
-model = "backup-model"
-secret_ref = "SHIJU_LLM_SECONDARY_KEY"
-tier = "secondary"
+provider_id = "api-2"
+base_url = "https://api.zscc.in/v1" # URL
+secret_ref = "SHIJU_LLM_API_2_KEY" # Key 的环境变量名
+models = ["deepseek-v3.2-guiji-cc", "deepseek-v4-flash-nv-cc", "Qwen/Qwen3.5-9B", "Qwen/Qwen3.6-27B"]
+tier = "primary"
 priority = 10
 weight = 1
 max_concurrency = 4
@@ -26,3 +26,17 @@ timeout_seconds = 120
 supports_tools = true
 supports_stream = true
 cost_level = "higher"
+
+[[endpoints]]
+provider_id = "api-3"
+base_url = "https://api.zscc.in/v1" # URL
+secret_ref = "SHIJU_LLM_API_3_KEY" # Key 的环境变量名
+models = ["deepseek-v3.2-guiji-cc", "deepseek-v4-flash-nv-cc", "Qwen/Qwen3.5-9B", "Qwen/Qwen3.6-27B"]
+tier = "secondary"
+priority = 10
+weight = 1
+max_concurrency = 4
+timeout_seconds = 120
+supports_tools = true
+supports_stream = true
+cost_level = "standard"

@@ -27,6 +27,7 @@ const siteStatus = document.querySelector("#site-status");
 let statusTimer;
 let authToken = localStorage.getItem("shiju_token") || "";
 let currentUser = null;
+let loginReturnHash = "#chat";
 let currentConversationId = null;
 const activeEvaluations = new Map();
 const failedEvaluations = new Set();
@@ -75,6 +76,13 @@ function openDrawer(drawer) {
 }
 
 function showRoute(route, options = {}) {
+  const protectedRoutes = new Set(["forum", "forum-thread", "forum-compose", "notifications", "profile", "public-profile", "admin"]);
+  if (protectedRoutes.has(route) && !currentUser) {
+    loginReturnHash = window.location.hash || `#${route}`;
+    if (window.location.hash !== "#home") window.history.replaceState(null, "", "#home");
+    route = "home";
+    window.setTimeout(() => requireLogin(), 0);
+  }
   const resolvedRoute = route === "home" && currentUser ? "chat" : (views.has(route) ? route : "home");
   if (route === "home" && currentUser && window.location.hash !== "#chat") window.history.replaceState(null, "", "#chat");
   for (const [name, view] of views) view.hidden = name !== resolvedRoute;
@@ -135,6 +143,17 @@ document.querySelector("#login-button").addEventListener("click", () => {
   openDrawer(rightDrawer);
 });
 
+// 论坛中的查看、翻页、发帖和互动都属于登录后操作，统一在事件入口拦截动态生成的控件。
+document.addEventListener("click", (event) => {
+  if (currentUser || !event.target.closest(".forum-view, .forum-thread-view, .forum-compose-view")) return;
+  const link = event.target.closest("a[href]");
+  if (link?.getAttribute("href") === "#home") return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  loginReturnHash = window.location.hash || "#forum";
+  requireLogin();
+}, true);
+
 document.querySelectorAll("[data-profile-drawer-tab]").forEach((button) => {
   button.addEventListener("click", () => {
     if (!currentUser) {
@@ -151,8 +170,7 @@ document.querySelectorAll("[data-profile-drawer-tab]").forEach((button) => {
 });
 document.querySelector("#drawer-login-action")?.addEventListener("click", () => {
   closeDrawers();
-  document.querySelector("#login-dialog").showModal();
-  document.querySelector("#login-username").focus();
+  requireLogin();
 });
 document.querySelector("#drawer-logout-action")?.addEventListener("click", () => { closeDrawers(); logout(); });
 
@@ -174,8 +192,7 @@ document.querySelectorAll("[data-open-register]").forEach((button) => {
 document.querySelectorAll("[data-demo-action]").forEach((button) => {
   button.addEventListener("click", () => {
     if (button.dataset.demoAction === "login") {
-      document.querySelector("#login-dialog").showModal();
-      document.querySelector("#login-username").focus();
+      requireLogin();
       return;
     }
     if (button.dataset.demoAction === "publish") openThreadDialog();
@@ -202,7 +219,10 @@ document.querySelector("#login-form").addEventListener("submit", async (event) =
     status.textContent = "";
     await loadConversations({ restore: true });
     await loadProfileData();
-    if (routeFromHash() === "home") window.location.hash = "chat";
+    const returnHash = loginReturnHash || "#chat";
+    loginReturnHash = "#chat";
+    window.location.hash = returnHash === "#home" ? "#chat" : returnHash;
+    showRoute(routeFromHash(), { scroll: false });
     announce(`欢迎回来，${currentUser.display_name}`);
   } catch (error) { status.textContent = error.message; }
 });
@@ -231,6 +251,45 @@ registerForm.addEventListener("submit", async (event) => {
     const payload = await apiFetch("/v1/auth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: registerPhone.value.trim(), password: registerPassword.value }) });
     authGeneration++; authToken = payload.token; currentUser = payload.user; localStorage.setItem("shiju_token", authToken); updateAuthUi(); await loadProfileData(); registerStatus.textContent = "注册成功"; window.location.hash = "chat"; announce(`欢迎加入，${currentUser.display_name}`);
   } catch (error) { registerStatus.textContent = error.message; }
+});
+
+document.querySelectorAll("[data-open-login]").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelector("[data-home-auth-mode='login']")?.click();
+  });
+});
+
+document.querySelectorAll("[data-home-auth-mode]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const login = button.dataset.homeAuthMode === "login";
+    document.querySelector("#register-form").hidden = login;
+    document.querySelector("#home-login-form").hidden = !login;
+    document.querySelector("#register-title").textContent = login ? "登录账户" : "注册账户";
+    document.querySelector(".register-panel__heading .eyebrow").textContent = login ? "欢迎回来" : "新用户";
+    (login ? document.querySelector("#home-login-username") : document.querySelector("#register-phone")).focus();
+  });
+});
+
+document.querySelector("#home-login-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const status = document.querySelector("#home-login-status");
+  status.textContent = "登录中……";
+  try {
+    const payload = await apiFetch("/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: document.querySelector("#home-login-username").value.trim(), password: document.querySelector("#home-login-password").value }),
+    });
+    authGeneration++;
+    authToken = payload.token;
+    currentUser = payload.user;
+    localStorage.setItem("shiju_token", authToken);
+    updateAuthUi();
+    await loadConversations({ restore: true });
+    await loadProfileData();
+    window.location.hash = "#chat";
+    announce(`欢迎回来，${currentUser.display_name}`);
+  } catch (error) { status.textContent = error.message; }
 });
 
 document.querySelector("#profile-logout-button")?.addEventListener("click", logout);
@@ -324,6 +383,9 @@ avatarCropForm?.addEventListener("submit", async (event) => {
 
 const chatForm = document.querySelector("#chat-form");
 const chatInput = document.querySelector("#chat-input");
+const chatModel = document.querySelector("#chat-model");
+const chatAttachment = document.querySelector("#chat-attachment");
+const chatAttachmentPreview = document.querySelector("#chat-attachment-preview");
 const chatThreadScroll = document.querySelector("#chat-thread-scroll");
 const chatThread = document.querySelector("#chat-thread");
 const chatWelcome = document.querySelector("#chat-welcome");
@@ -362,6 +424,7 @@ syncChatContentWidth();
 new ResizeObserver(syncChatContentWidth).observe(chatThreadScroll);
 window.addEventListener("resize", syncChatContentWidth);
 const chatSubmit = chatForm.querySelector("button[type='submit']");
+const chatCancel = document.querySelector("#chat-cancel");
 const agentStatus = document.querySelector("#agent-status");
 const initialThreadMarkup = chatThread.innerHTML;
 let chatSessionId = null;
@@ -372,6 +435,28 @@ let conversationRefreshTimer = null;
 let conversationLoadVersion = 0;
 let authGeneration = 0;
 let activeConversationEvents = null;
+let selectedChatAttachment = null;
+
+function renderChatAttachment(file) {
+  selectedChatAttachment = file || null;
+  if (!chatAttachmentPreview) return;
+  chatAttachmentPreview.replaceChildren();
+  chatAttachmentPreview.hidden = !file;
+  if (!file) return;
+  const label = document.createElement("span");
+  label.textContent = file.name;
+  const remove = document.createElement("button");
+  remove.type = "button"; remove.className = "chat-attachment-remove"; remove.textContent = "×";
+  remove.title = "移除附件"; remove.setAttribute("aria-label", "移除附件");
+  remove.addEventListener("click", () => { if (chatAttachment) chatAttachment.value = ""; renderChatAttachment(null); });
+  chatAttachmentPreview.append(label, remove);
+}
+chatAttachment?.addEventListener("change", () => {
+  const file = chatAttachment.files?.[0];
+  if (!file) return;
+  if (file.size > 8 * 1024 * 1024) { chatAttachment.value = ""; announce("图片不能超过 8MB"); return; }
+  renderChatAttachment(file);
+});
 
 async function loadConversations({ restore = false } = {}) {
   if (!currentUser) { document.querySelector("#conversation-list").innerHTML = "<p>登录后查看历史对话</p>"; return; }
@@ -537,6 +622,26 @@ function isTangPoem(poem) {
     .some((value) => /唐诗|律诗|绝句|排律|五言|七言/.test(String(value)));
 }
 
+function poemGenreLabel(poem) {
+  const values = [poem.work_type, poem.meter_type, poem.form_name]
+    .filter(Boolean)
+    .map((value) => String(value));
+  if (values.some((value) => /宋词|词牌|词$/.test(value))) return "宋词";
+  if (values.some((value) => /汉俳|俳句/.test(value))) return "汉俳";
+  if (values.some((value) => /排律/.test(value))) return "排律";
+  if (values.some((value) => /唐诗|律诗|绝句/.test(value))) return "唐诗";
+  return poem.work_type || "诗词";
+}
+
+function poemCreatedDate(value) {
+  if (value == null || value === "") return null;
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric)
+    ? new Date(numeric > 1e12 ? numeric : numeric * 1000)
+    : new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 const poemTextMeasurer = document.createElement("canvas").getContext("2d");
 
 function updatePoemLayout(article) {
@@ -696,7 +801,9 @@ function createPoemHandscroll(poem, { resultLabel = "", showTime = false, evalua
   const heading = document.createElement("header");
   heading.className = "poem-handscroll__heading";
   const kind = document.createElement("p");
-  kind.textContent = resultLabel || [value.work_type, value.form_name].filter(Boolean).join(" · ") || "诗词";
+  kind.textContent = resultLabel || [poemGenreLabel(value), value.form_name]
+    .filter((item, index, items) => item && (index === 0 || item !== items[0]))
+    .join(" · ") || "诗词";
   const title = document.createElement("h3");
   title.textContent = value.title;
   const seal = document.createElement("span");
@@ -776,10 +883,15 @@ function createPoemHandscroll(poem, { resultLabel = "", showTime = false, evalua
     footerActions.append(share);
   }
 
-  if (showTime && value.created_at) {
+  const createdDate = poemCreatedDate(value.created_at);
+  if (showTime) {
     const time = document.createElement("time");
-    time.dateTime = new Date(value.created_at * 1000).toISOString();
-    time.textContent = `创建于 ${new Date(value.created_at * 1000).toLocaleString("zh-CN")}`;
+    if (createdDate) {
+      time.dateTime = createdDate.toISOString();
+      time.textContent = createdDate.toLocaleString("zh-CN");
+    } else {
+      time.textContent = "创建时间未知";
+    }
     scoreFooter.append(time);
   }
   scoreFooter.append(footerActions);
@@ -824,18 +936,27 @@ async function loadPoems() {
   const type = document.querySelector("#profile-work-type")?.value || "";
   renderPoemList(document.querySelector("#poem-list"), ownedPoems.filter((poem) => !type || poem.work_type === type), "暂无诗作记录。完成一次格律生成后，作品会自动归档到这里。");
   renderPoemList(document.querySelector("#favorite-list"), favoritePoems, "还没有收藏作品。");
-  document.querySelector("#profile-poem-count").textContent = ownedPoems.length;
-  document.querySelector("#profile-favorite-count").textContent = favoritePoems.length;
-  profilePoems.filter((poem) => !poem.evaluation && poem.job_id && poem.candidate_ordinal).forEach(async (poem) => {
+  profilePoems.filter((poem) => !poem.evaluation && poem.job_id && poem.candidate_ordinal != null).forEach(async (poem) => {
     const key = `${poem.job_id}:${poem.candidate_ordinal}`;
     if (activeEvaluations.has(key) || failedEvaluations.has(key)) return;
     try {
       const job = await apiFetch(`/v1/poetry/jobs/${encodeURIComponent(poem.job_id)}/state`);
-      const candidate = (job.candidates || []).find((item) => Number(item.ordinal) === Number(poem.candidate_ordinal));
-      if (candidate) ensureCandidateEvaluation(job, candidate, job.request || poem, () => {});
+      console.info("[历史作品评分] 开始补算", { id: poem.id, title: poem.title, meter_type: poem.meter_type, form_name: poem.form_name, candidate_ordinal: poem.candidate_ordinal, job_status: job.status, candidates: (job.candidates || []).map((item) => ({ ordinal: item.ordinal, status: item.status, hasContent: Boolean(item.content) })) });
+      const candidates = job.candidates || [];
+      const candidateOrdinal = Number(poem.candidate_ordinal);
+      const candidate = candidates.find((item) => Number(item.ordinal) === candidateOrdinal)
+        || candidates[candidateOrdinal]
+        || candidates[candidateOrdinal - 1];
+      if (candidate) {
+        const evaluationCandidate = { ...candidate, content: candidate.content || poem.content, status: candidate.status || "succeeded" };
+        ensureCandidateEvaluation(job, evaluationCandidate, { ...(job.request || {}), ...poem }, () => {});
+      } else if (poem.content) {
+        console.warn("[历史作品评分] 使用作品正文直接补算", { id: poem.id, candidate_ordinal: poem.candidate_ordinal });
+        ensureCandidateEvaluation(job, { ordinal: candidateOrdinal, status: "succeeded", content: poem.content }, { ...(job.request || {}), ...poem }, () => {});
+      } else console.error("[历史作品评分] 找不到候选且作品无正文", { id: poem.id, candidate_ordinal: poem.candidate_ordinal, candidates: candidates.map((item) => item.ordinal) });
     } catch (error) {
       failedEvaluations.add(key);
-      console.warn("历史作品评分补算失败", error);
+      console.error("[历史作品评分] 补算失败", { poem, error, stack: error?.stack });
     }
   });
 }
@@ -844,11 +965,15 @@ async function loadProfileData() {
   if (!currentUser) return;
   const generation = authGeneration;
   try {
-    const [collections, conversations, following] = await Promise.all([
-      apiFetch("/v1/profile/poem-collections"), apiFetch("/v1/conversations?include_deleted=true"), apiFetch("/v1/forum/following"), loadPoems(),
+    const [collections, conversations, followingList, publicProfile] = await Promise.all([
+      apiFetch("/v1/profile/poem-collections"), apiFetch("/v1/conversations?include_deleted=true"), apiFetch("/v1/forum/following"), apiFetch(`/v1/forum/users/${encodeURIComponent(currentUser.id)}`), loadPoems(),
     ]);
     if (generation !== authGeneration) return;
     profileCollections = collections.items || [];
+    document.querySelector("#profile-thread-count").textContent = (publicProfile.threads || []).length;
+    document.querySelector("#profile-public-poem-count").textContent = (publicProfile.poems || []).length;
+    document.querySelector("#profile-follower-count").textContent = publicProfile.follower_count || 0;
+    document.querySelector("#profile-following-count").textContent = publicProfile.following_count || 0;
     const collectionList = document.querySelector("#collection-list"); collectionList.replaceChildren();
     if (!profileCollections.length) collectionList.innerHTML = '<p class="empty-state">还没有作品合集。</p>';
     else profileCollections.forEach((item) => {
@@ -857,7 +982,7 @@ async function loadProfileData() {
       row.querySelector("strong").textContent = item.name; row.querySelector("span").textContent = `${item.count} 首作品`; collectionList.append(row);
     });
     renderArchive((conversations.items || []).filter((item) => item.deleted_at));
-    renderUserRows(document.querySelector("#following-list"), following.items || [], true);
+    renderUserRows(document.querySelector("#following-list"), followingList.items || [], true);
   } catch (error) { announce(`个人中心加载失败：${error.message}`); }
 }
 
@@ -944,15 +1069,19 @@ async function apiFetch(url, options = {}) {
   if (!response.ok) {
     const error = new Error(responseError(payload, response.status));
     error.status = response.status;
+    if (response.status === 401 && authToken) invalidateAuth("登录已失效，请重新登录。", true);
     throw error;
   }
   return payload;
 }
 
 function requireLogin() {
-  if (authToken) return true;
-  document.querySelector("#login-dialog").showModal();
-  document.querySelector("#login-username").focus();
+  if (authToken && currentUser) return true;
+  loginReturnHash = window.location.hash || "#chat";
+  if (window.location.hash !== "#home") window.location.hash = "#home";
+  showRoute("home", { scroll: false });
+  document.querySelector("[data-home-auth-mode='login']")?.click();
+  window.setTimeout(() => document.querySelector("#home-login-username")?.focus(), 0);
   return false;
 }
 
@@ -964,9 +1093,10 @@ function updateAuthUi() {
   document.querySelector("#drawer-login-action").hidden = Boolean(currentUser);
   document.querySelector("#drawer-logout-action").hidden = !currentUser;
   document.querySelector("#home-nav-link").hidden = Boolean(currentUser);
-  document.querySelector(".site-brand").href = currentUser ? "#forum" : "#home";
+  document.querySelector(".site-brand").href = currentUser ? "#chat" : "#home";
   document.querySelector("#chat-user-status").textContent = currentUser ? `已登录：${currentUser.display_name}` : "未登录，请先登录";
-  document.querySelector("#profile-user-label").textContent = currentUser ? `${currentUser.display_name} 的创作档案` : "登录后查看你生成的全部诗词。";
+  const profileUserLabel = document.querySelector("#profile-user-label");
+  if (profileUserLabel) profileUserLabel.textContent = currentUser ? `${currentUser.display_name} 的创作档案` : "登录后查看你生成的全部诗词。";
   const displayName = document.querySelector("#profile-display-name");
   const bio = document.querySelector("#profile-bio");
   if (displayName) displayName.value = currentUser?.display_name || "";
@@ -982,6 +1112,19 @@ function updateAuthUi() {
   if (drawerHandle) drawerHandle.textContent = currentUser ? `@${currentUser.username}` : "登录后管理创作";
   const adminLink = document.querySelector("#admin-nav-link");
   if (adminLink) adminLink.hidden = currentUser?.role !== "admin";
+}
+
+function invalidateAuth(message = "登录已失效，请重新登录。", openDialog = false) {
+  if (!authToken && !currentUser) return;
+  authGeneration++;
+  authToken = "";
+  currentUser = null;
+  currentConversationId = null;
+  localStorage.removeItem("shiju_token");
+  resetAuthenticatedUi();
+  updateAuthUi();
+  if (openDialog) requireLogin();
+  announce(message);
 }
 
 function setUserAvatar(element, user) {
@@ -1028,6 +1171,17 @@ async function loadCurrentUser() {
   }
 }
 
+window.addEventListener("storage", (event) => {
+  if (event.key !== "shiju_token") return;
+  authToken = event.newValue || "";
+  if (!authToken) invalidateAuth("已在其他窗口退出登录。", false);
+  else loadCurrentUser();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && authToken) loadCurrentUser();
+});
+
 function appendMessage(text, role, state = "") {
   const article = document.createElement("article");
   article.className = `chat-message chat-message--${role}`;
@@ -1046,6 +1200,19 @@ function appendMessage(text, role, state = "") {
   const paragraph = document.createElement("p");
   paragraph.textContent = role === "assistant" ? normalizeAssistantText(text) : text;
   content.append(paragraph);
+  if (role === "user") {
+    const actions = document.createElement("div");
+    actions.className = "chat-message-actions";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "chat-message-edit";
+    edit.dataset.editMessage = "true";
+    edit.title = "编辑这条消息";
+    edit.setAttribute("aria-label", "编辑这条消息");
+    edit.textContent = "编辑";
+    actions.append(edit);
+    content.append(actions);
+  }
   if (role === "assistant") article.append(avatar, content);
   else article.append(content, avatar);
   chatThread.append(article);
@@ -1224,7 +1391,7 @@ function setChatBusy(busy) {
   chatForm.setAttribute("aria-busy", String(busy));
   chatInput.disabled = busy;
   chatSubmit.disabled = busy;
-  chatSubmit.textContent = busy ? "等待" : "发送";
+  if (chatCancel) chatCancel.hidden = !busy;
 }
 
 function responseError(payload, status) {
@@ -1313,6 +1480,7 @@ async function ensureCandidateEvaluation(job, candidate, requestMeta, onComplete
   if (activeEvaluations.has(key) || failedEvaluations.has(key)) return;
   const operation = (async () => {
     try {
+      console.info("[历史作品评分] 调用本地评分器", { job_id: job.job_id, ordinal: candidate.ordinal, meter_type: requestMeta.meter_type, form_name: requestMeta.form_name, contentLength: String(candidate.content || "").length });
       const evaluation = await evaluateGeneratedPoem(candidate.content, requestMeta);
       const saved = await apiFetch(`/v1/poetry/jobs/${encodeURIComponent(job.job_id)}/candidates/${candidate.ordinal}/evaluation`, {
         method: "PUT",
@@ -1324,7 +1492,7 @@ async function ensureCandidateEvaluation(job, candidate, requestMeta, onComplete
       onComplete();
     } catch (error) {
       failedEvaluations.add(key);
-      console.warn("候选格律评分失败", error);
+      console.error("[历史作品评分] 候选评分失败", JSON.stringify({ job_id: job.job_id, ordinal: candidate.ordinal, meter_type: requestMeta.meter_type, form_name: requestMeta.form_name, message: error?.message || String(error), stack: error?.stack || "" }));
       onComplete();
     } finally {
       activeEvaluations.delete(key);
@@ -1498,7 +1666,7 @@ chatForm.addEventListener("submit", async (event) => {
     const response = await fetch("/v1/agent/chat/stream", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ message, session_id: chatSessionId, conversation_id: currentConversationId }),
+      body: JSON.stringify({ message, model: chatModel?.value || "deepseek-v3.2-guiji-cc", session_id: chatSessionId, conversation_id: currentConversationId }),
       signal: requestController.signal,
     });
     if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(responseError(payload, response.status)); }
@@ -1518,9 +1686,9 @@ chatForm.addEventListener("submit", async (event) => {
             }
           }
           if (event === "assistant.delta") { reply += data.text || ""; replaceMessage(waitingMessage, reply); }
-          if (event === "tool.started") agentStatus.textContent = `调用工具：${data.name || "处理中"}`;
+          if (event === "tool.started") { agentStatus.textContent = `正在使用工具：${data.name || "处理中"}`; agentStatus.classList.add("is-working"); }
           if (event === "tool.completed") {
-            agentStatus.textContent = "工具结果已返回";
+            agentStatus.textContent = "工具结果已返回"; agentStatus.classList.remove("is-working");
             if ((data.name === "prepare_generation" || data.name === "prepare_rewrite") && data.output?.ok) {
               appendProposalEditor(data.output.result);
             }
@@ -1537,14 +1705,19 @@ chatForm.addEventListener("submit", async (event) => {
       currentConversationId = responseConversationId;
       if (currentConversationId && currentUser) localStorage.setItem(`shiju_conversation_${currentUser.id}`, currentConversationId);
       replaceMessage(waitingMessage, reply || "暂时无法回复。", reply ? "" : "error");
-      agentStatus.textContent = "已连接";
+      agentStatus.textContent = "已连接"; agentStatus.classList.remove("is-working");
       jobs.forEach((job) => startJobProgress(job.job_id, job));
     }
     await loadConversations();
   } catch (error) {
-    if (error.name === "AbortError") return;
+    if (error.name === "AbortError") {
+      replaceMessage(waitingMessage, "发送已取消。", "error");
+      agentStatus.textContent = "已取消";
+      agentStatus.classList.remove("is-working");
+      return;
+    }
     replaceMessage(waitingMessage, `暂时无法回复：${error.message}`, "error");
-    agentStatus.textContent = "连接异常";
+    agentStatus.textContent = "连接异常"; agentStatus.classList.remove("is-working");
   } finally {
     if (activeChatRequest === requestController) {
       activeChatRequest = null;
@@ -1552,6 +1725,13 @@ chatForm.addEventListener("submit", async (event) => {
       chatInput.focus();
     }
   }
+});
+
+chatCancel?.addEventListener("click", () => {
+  if (!activeChatRequest) return;
+  activeChatRequest.abort();
+  agentStatus.textContent = "已取消";
+  agentStatus.classList.remove("is-working");
 });
 
 chatInput.addEventListener("keydown", (event) => {
@@ -1567,6 +1747,17 @@ chatInput.addEventListener("input", () => {
 });
 
 chatThread.addEventListener("click", (event) => {
+  const edit = event.target.closest("[data-edit-message]");
+  if (edit) {
+    const paragraph = edit.closest(".message-content")?.querySelector("p");
+    if (paragraph) {
+      chatInput.value = paragraph.textContent || "";
+      chatInput.dispatchEvent(new Event("input"));
+      chatInput.focus();
+      chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+    }
+    return;
+  }
   const button = event.target.closest("[data-prompt]");
   if (!button) return;
   chatInput.value = button.dataset.prompt;
@@ -1587,6 +1778,14 @@ document.querySelector("#chat-sidebar-toggle")?.addEventListener("click", () => 
 document.querySelector("#chat-sidebar-reopen")?.addEventListener("click", () => {
   setChatSidebarCollapsed(false);
   chatSidebarToggle?.focus();
+});
+document.addEventListener("pointerdown", (event) => {
+  if (window.matchMedia("(max-width: 760px)").matches
+    && chatLayout
+    && !chatLayout.classList.contains("is-sidebar-collapsed")
+    && !event.target.closest(".chat-sidebar")) {
+    setChatSidebarCollapsed(true);
+  }
 });
 
 document.querySelector("#new-chat").addEventListener("click", () => {
@@ -1880,18 +2079,23 @@ function profileLink(user, child, className = "") {
   const link = document.createElement("a"); link.href = `#user/${encodeURIComponent(user.id)}`; link.className = className; link.append(child); return link;
 }
 
-function replyInteractionTotal(reply) {
-  return Number(reply.like_count || 0) + Number(reply.question_count || 0);
+function compareRepliesInTree(left, right) {
+  return Number(left.floor_no || 0) - Number(right.floor_no || 0)
+    || Number(left.created_at || 0) - Number(right.created_at || 0)
+    || String(left.id || "").localeCompare(String(right.id || ""));
 }
 
-function collectReplyDescendants(reply, children, result = [], visited = new Set()) {
-  const nested = children.get(reply.id) || [];
-  nested.forEach((child) => {
-    if (visited.has(child.id)) return;
+function collectReplyDescendants(reply, children) {
+  const result = [];
+  const visited = new Set();
+  const queue = [...(children.get(reply.id) || [])].sort(compareRepliesInTree);
+  while (queue.length) {
+    const child = queue.shift();
+    if (visited.has(child.id)) continue;
     visited.add(child.id);
     result.push(child);
-    collectReplyDescendants(child, children, result, visited);
-  });
+    queue.push(...[...(children.get(child.id) || [])].sort(compareRepliesInTree));
+  }
   return result;
 }
 
@@ -1962,7 +2166,7 @@ function createMobileExpandedReply(reply, children, threadId, depth = 0) {
   const nested = children.get(reply.id) || [];
   if (nested.length) {
     const group = document.createElement("div"); group.className = "thread-reply-mobile-children thread-reply-mobile-children--expanded";
-    [...nested].sort((left, right) => replyInteractionTotal(right) - replyInteractionTotal(left)).forEach((child) => group.append(createMobileExpandedReply(child, children, threadId, depth + 1)));
+    [...nested].sort(compareRepliesInTree).forEach((child) => group.append(createMobileExpandedReply(child, children, threadId, depth + 1)));
     node.append(group);
   }
   return node;
@@ -1978,7 +2182,7 @@ function createMobileReplyNode(reply, children, threadId, depth = 0) {
   if (!descendants.length) return node;
 
   const group = document.createElement("div"); group.className = "thread-reply-mobile-children";
-  const ranked = descendants.sort((left, right) => replyInteractionTotal(right) - replyInteractionTotal(left) || Number(right.created_at || 0) - Number(left.created_at || 0));
+  const ranked = descendants;
   const preview = document.createElement("div"); preview.className = "thread-reply-mobile-preview";
   ranked.slice(0, 2).forEach((child) => preview.append(createMobileReplyPreview(child)));
   group.append(preview);
@@ -1989,7 +2193,7 @@ function createMobileReplyNode(reply, children, threadId, depth = 0) {
     remaining.textContent = ranked.length === 2 ? "查看完整评论" : `查看剩余 ${ranked.length - 2} 条回复`;
     remaining.addEventListener("click", () => {
       group.replaceChildren();
-      [...nested].sort((left, right) => replyInteractionTotal(right) - replyInteractionTotal(left) || Number(right.created_at || 0) - Number(left.created_at || 0)).forEach((child) => group.append(createMobileExpandedReply(child, children, threadId, depth + 1)));
+      [...nested].sort(compareRepliesInTree).forEach((child) => group.append(createMobileExpandedReply(child, children, threadId, depth + 1)));
     }, { once: true });
     group.append(remaining);
   }
@@ -2029,8 +2233,9 @@ async function loadThreadPage() {
     const replyList = document.createElement("div"); replyList.className = "thread-detail__replies";
     const byId = new Map((replies.items || []).map((reply) => [reply.id, reply])); const children = new Map();
     (replies.items || []).forEach((reply) => { if (!reply.parent_reply_id) return; if (!children.has(reply.parent_reply_id)) children.set(reply.parent_reply_id, []); children.get(reply.parent_reply_id).push(reply); });
+    children.forEach((items) => items.sort(compareRepliesInTree));
     const mobileThread = window.matchMedia("(max-width: 760px)").matches;
-    (replies.items || []).filter((reply) => !reply.parent_reply_id || !byId.has(reply.parent_reply_id)).forEach((reply) => replyList.append((mobileThread ? createMobileReplyNode : replyNode)(reply, children, id)));
+    (replies.items || []).filter((reply) => !reply.parent_reply_id || !byId.has(reply.parent_reply_id)).sort(compareRepliesInTree).forEach((reply) => replyList.append((mobileThread ? createMobileReplyNode : replyNode)(reply, children, id)));
 
     const form = document.createElement("form"); form.className = "thread-reply-form";
     form.innerHTML = '<input type="hidden" id="thread-reply-parent"><div id="thread-reply-target-label" class="reply-target-label" hidden><span></span><button type="button" aria-label="取消回复目标" title="取消回复">×</button></div><textarea id="thread-reply-content" rows="5" maxlength="20000" required placeholder="写下你的回应……"></textarea><div id="reply-poem-preview" class="editor-poem-preview" hidden></div><div class="editor-actions editor-actions--split"><div class="editor-tools"><button type="button" class="editor-tool" id="thread-reply-share" aria-label="分享诗作" title="分享诗作">+</button><button type="button" class="editor-tool" data-empty-emoji aria-label="表情" title="表情功能暂未开放">:-)</button></div><span class="form-status" id="thread-reply-draft-status"></span><button type="submit" class="primary-button">发送回复</button></div><p class="form-status" id="thread-reply-status"></p>';
@@ -2361,5 +2566,5 @@ function setupInkLandscape() {
   draw();
 }
 
-showRoute(window.location.hash ? routeFromHash() : "chat", { scroll: false });
+showRoute(window.location.hash ? routeFromHash() : (authToken ? "chat" : "home"), { scroll: false });
 setupInkLandscape();

@@ -86,13 +86,27 @@ class OpenAICompatibleChatModel:
         return message
 
     def stream(self, messages: Sequence[Mapping[str, Any]], tools: Sequence[Mapping[str, Any]]):
-        payload: dict[str, Any] = {
-            "model": self._model, "messages": list(messages), "tools": list(tools),
-            "tool_choice": "auto", "stream": True,
-        }
-        try:
-            stream_transport = self._stream_transport or request_sse
-            chunks = stream_transport("POST", self._url, {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}, payload, self._timeout_seconds)
-            return merge_openai_stream(iter_sse_lines(chunks))
-        except (JsonTransportError, OSError, ValueError) as exc:
-            raise ChatModelError(f"大模型 SSE 请求失败: {exc}", status_code=getattr(exc, "status_code", None), retry_after=getattr(exc, "retry_after", None)) from exc
+        def generate():
+            payload: dict[str, Any] = {
+                "model": self._model, "messages": list(messages), "tools": list(tools),
+                "tool_choice": "auto", "stream": True,
+            }
+            emitted = False
+            try:
+                stream_transport = self._stream_transport or request_sse
+                chunks = stream_transport("POST", self._url, {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}, payload, self._timeout_seconds)
+                for event in merge_openai_stream(iter_sse_lines(chunks)):
+                    emitted = True
+                    yield event
+                return
+            except (JsonTransportError, OSError, ValueError) as exc:
+                if emitted:
+                    raise ChatModelError(f"大模型 SSE 请求失败: {exc}", status_code=getattr(exc, "status_code", None), retry_after=getattr(exc, "retry_after", None)) from exc
+            # Some compatible providers accept chat completions but reject stream=true.
+            # Fall back to one normal response so the existing Agent loop remains usable.
+            message = self.complete(messages, tools)
+            if message.get("content"):
+                yield {"type": "assistant.delta", "text": str(message["content"])}
+            calls = list(message.get("tool_calls") or [])
+            yield {"type": "turn.finished", "finish_reason": "tool_calls" if calls else "stop", "tool_calls": calls}
+        return generate()

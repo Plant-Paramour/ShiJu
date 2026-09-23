@@ -350,13 +350,13 @@ class JobRepository:
                 "WHERE job_id=? AND ordinal=? AND status='succeeded'",
                 (payload, now, job_id, ordinal),
             )
-            if updated.rowcount != 1:
-                raise ValueError("候选尚未生成完成")
-            connection.execute(
+            archived = connection.execute(
                 "UPDATE poems SET evaluation_json=? "
                 "WHERE job_id=? AND candidate_ordinal=? AND user_id=?",
                 (payload, job_id, ordinal, user_id),
             )
+            if updated.rowcount != 1 and archived.rowcount != 1:
+                raise ValueError("候选尚未生成完成")
         EventRepository(self.database, clock=self._clock).append_job_event(
             job_id,
             "candidate.evaluated",

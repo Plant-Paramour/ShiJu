@@ -18,6 +18,7 @@ class AgentSettings:
 
     @classmethod
     def from_env(cls) -> "AgentSettings":
+        gateway_config_path = os.getenv("SHIJU_MODEL_GATEWAY_CONFIG", "").strip()
         base_url = os.getenv("SHIJU_LLM_BASE_URL", "").strip()
         api_key = os.getenv("SHIJU_LLM_API_KEY", "").strip()
         model = os.getenv("SHIJU_LLM_MODEL", "").strip()
@@ -30,7 +31,7 @@ class AgentSettings:
             )
             if not value
         ]
-        if missing:
+        if missing and not gateway_config_path:
             raise ValueError("缺少 Agent 配置: " + ", ".join(missing))
         return cls(
             llm_base_url=base_url,
@@ -42,7 +43,7 @@ class AgentSettings:
             poetry_api_token=os.getenv("SHIJU_AGENT_TOKEN", "change-me-agent").strip(),
             request_timeout_seconds=float(os.getenv("SHIJU_LLM_TIMEOUT_SECONDS", "90")),
             max_tool_rounds=int(os.getenv("SHIJU_AGENT_MAX_TOOL_ROUNDS", "8")),
-            gateway_config_path=os.getenv("SHIJU_MODEL_GATEWAY_CONFIG", "").strip(),
+            gateway_config_path=gateway_config_path,
             gateway_max_attempts=int(os.getenv("SHIJU_MODEL_GATEWAY_MAX_ATTEMPTS", "3")),
         )
 

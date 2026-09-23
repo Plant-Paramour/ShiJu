@@ -44,6 +44,23 @@ def test_gateway_does_not_retry_client_error(monkeypatch):
     assert gateway.status()[0]["failures"] == 1
 
 
+def test_gateway_moves_to_next_model_on_compatibility_error(monkeypatch):
+    class ModelByUrl(FakeModel):
+        def complete(self, messages, tools):
+            if "first" in self.base_url:
+                raise JsonTransportError("model not found", status_code=400)
+            return {"role": "assistant", "content": "fallback"}
+
+    monkeypatch.setattr("apps.agent.gateway.OpenAICompatibleChatModel", ModelByUrl)
+    os.environ["GW_FIRST"] = "key-1"
+    os.environ["GW_SECOND"] = "key-2"
+    gateway = ModelGateway([
+        EndpointConfig("first", "https://first", "deepseek-v3.2-guiji-cc", "GW_FIRST"),
+        EndpointConfig("second", "https://second", "Qwen/Qwen3.5-9B", "GW_SECOND", tier="secondary"),
+    ])
+    assert gateway.complete([], []) == {"role": "assistant", "content": "fallback"}
+
+
 def test_gateway_stream_keeps_interface(monkeypatch):
     monkeypatch.setattr("apps.agent.gateway.OpenAICompatibleChatModel", FakeModel)
     os.environ["GW_STREAM"] = "key"
@@ -78,3 +95,45 @@ def test_gateway_loads_toml(tmp_path, monkeypatch):
     monkeypatch.setenv("GW_TOML", "secret")
     gateway = ModelGateway.from_toml(config)
     assert gateway.status()[0]["provider_id"] == "p"
+
+
+def test_gateway_expands_models_per_url_and_key(tmp_path, monkeypatch):
+    config = tmp_path / "gateway.toml"
+    config.write_text(
+        "[[endpoints]]\nprovider_id='p'\nbase_url='https://example'\nsecret_ref='GW_MULTI'\nmodels=['m1','m2']\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GW_MULTI", "secret")
+    gateway = ModelGateway.from_toml(config)
+    assert [item["model"] for item in gateway.status()] == ["m1", "m2"]
+
+
+def test_gateway_rejects_invalid_endpoint_config():
+    with pytest.raises(ValueError):
+        ModelGateway([EndpointConfig("bad", "https://x", "m", "KEY", tier="unknown")])
+
+
+def test_gateway_does_not_retry_missing_secret(monkeypatch):
+    calls = 0
+
+    class CountingModel(FakeModel):
+        def complete(self, messages, tools):
+            nonlocal calls
+            calls += 1
+            return super().complete(messages, tools)
+
+    monkeypatch.setattr("apps.agent.gateway.OpenAICompatibleChatModel", CountingModel)
+    gateway = ModelGateway([EndpointConfig("missing", "https://x", "m", "NOT_SET")], max_attempts=3)
+    with pytest.raises(Exception, match="无可用端点"):
+        gateway.complete([], [])
+    assert calls == 0
+
+
+def test_gateway_filters_stream_unsupported_endpoint(monkeypatch):
+    monkeypatch.setattr("apps.agent.gateway.OpenAICompatibleChatModel", FakeModel)
+    os.environ["GW_TOOLS_ONLY"] = "key"
+    gateway = ModelGateway([
+        EndpointConfig("tools", "https://tools", "m", "GW_TOOLS_ONLY", supports_stream=False),
+    ])
+    with pytest.raises(Exception, match="无可用端点"):
+        list(gateway.stream([], []))

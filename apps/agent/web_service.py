@@ -30,6 +30,7 @@ class RepositoryPoetryJobs(PoetryJobs):
         *,
         user_id: str | None = None,
         conversation_id: str | None = None,
+        model: str | None = None,
     ):
         self._repository = repository
         self._gpu_provider = gpu_provider
@@ -186,12 +187,14 @@ class WebAgentService:
         history: list[dict[str, Any]] | None = None,
         user_id: str | None = None,
         conversation_id: str | None = None,
+        model: str | None = None,
     ) -> dict[str, Any]:
         active_id, entry = self._get_or_create_session(
             session_id,
             history=history,
             user_id=user_id,
             conversation_id=conversation_id,
+            model=model,
         )
         with entry.lock:
             reply = entry.agent.respond(message)
@@ -210,9 +213,10 @@ class WebAgentService:
         history: list[dict[str, Any]] | None = None,
         user_id: str | None = None,
         conversation_id: str | None = None,
+        model: str | None = None,
     ):
         active_id, entry = self._get_or_create_session(
-            session_id, history=history, user_id=user_id, conversation_id=conversation_id
+            session_id, history=history, user_id=user_id, conversation_id=conversation_id, model=model
         )
         with entry.lock:
             for event in entry.agent.respond_stream(message):
@@ -228,6 +232,7 @@ class WebAgentService:
         history: list[dict[str, Any]] | None = None,
         user_id: str | None = None,
         conversation_id: str | None = None,
+        model: str | None = None,
     ) -> tuple[str, _WebSession]:
         if session_id is not None and not self._SESSION_ID.fullmatch(session_id):
             raise ValueError("session_id 格式无效")
@@ -245,7 +250,7 @@ class WebAgentService:
                 )
                 entry = _WebSession(
                     agent=AgentSession(
-                        self._model,
+                        self._model.for_model(model) if hasattr(self._model, "for_model") else self._model,
                         AgentToolbox(self._project_root, jobs),
                         max_tool_rounds=self._max_tool_rounds,
                     ),

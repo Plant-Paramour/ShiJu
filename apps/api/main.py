@@ -5,6 +5,7 @@ from pathlib import Path
 from .database import Database
 from .job_repository import JobRepository
 from .settings import ApiSettings
+from .rate_limit import RequestRateLimiter
 from .user_repository import UserRepository
 from .forum_repository import ForumRepository
 
@@ -37,6 +38,11 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
     # 兼容当前 FastAPI/Starlette 版本，避免依赖已移除的 add_event_handler。
     app.router.on_shutdown.append(database.close)
     app.state.settings = active
+    app.state.rate_limiter = RequestRateLimiter(
+        global_concurrency=active.agent_global_concurrency,
+        user_concurrency=active.agent_user_concurrency,
+        daily_quota=active.agent_daily_quota,
+    )
     app.state.jobs = JobRepository(database)
     app.state.users = users
     app.state.forum = ForumRepository(database)
@@ -59,6 +65,15 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
         limit = 2 * 1024 * 1024 if request.url.path == "/v1/profile/me/avatar" else active.max_request_bytes
         if length and int(length) > limit:
             return JSONResponse(status_code=413, content={"detail": "request too large"})
+        if request.url.path in {"/v1/agent/chat", "/v1/agent/chat/stream", "/v1/poetry/jobs/generate", "/v1/poetry/jobs/rewrite"}:
+            identity = request.headers.get("authorization", "") or (request.client.host if request.client else "unknown")
+            if not app.state.rate_limiter.acquire(identity):
+                return JSONResponse(status_code=429, content={"detail": "请求过于频繁或当前 Agent 已达到并发/额度上限"})
+            try:
+                response = await call_next(request)
+            finally:
+                app.state.rate_limiter.release(identity)
+            return response
         return await call_next(request)
 
     @app.get("/health/live", tags=["health"])

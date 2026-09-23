@@ -15,12 +15,19 @@ class ApiSettings:
     worker_lease_seconds: int = 300
     web_agent_enabled: bool = False
     auth_secret: str = "change-me-auth-secret"
+    agent_global_concurrency: int = 32
+    agent_user_concurrency: int = 2
+    agent_daily_quota: int = 200
 
     @classmethod
     def from_env(cls) -> "ApiSettings":
         database_url = os.getenv("DATABASE_URL", "").strip() or None
-        if os.getenv("SHIJU_ENV", "development").lower() in {"production", "prod"} and not database_url:
+        production = os.getenv("SHIJU_ENV", "development").lower() in {"production", "prod"}
+        if production and not database_url:
             raise ValueError("生产环境必须配置 DATABASE_URL（PostgreSQL）")
+        auth_secret = os.getenv("SHIJU_AUTH_SECRET", "change-me-auth-secret")
+        if production and auth_secret == "change-me-auth-secret":
+            raise ValueError("生产环境必须配置 SHIJU_AUTH_SECRET")
         return cls(
             database_path=Path(os.getenv("SHIJU_DATABASE_PATH", "var/shiju.db")),
             database_url=database_url,
@@ -30,5 +37,8 @@ class ApiSettings:
             worker_lease_seconds=int(os.getenv("SHIJU_WORKER_LEASE_SECONDS", "300")),
             web_agent_enabled=os.getenv("SHIJU_WEB_AGENT_ENABLED", "false").lower()
             in {"1", "true", "yes", "on"},
-            auth_secret=os.getenv("SHIJU_AUTH_SECRET", "change-me-auth-secret"),
+            auth_secret=auth_secret,
+            agent_global_concurrency=int(os.getenv("SHIJU_AGENT_GLOBAL_CONCURRENCY", "32")),
+            agent_user_concurrency=int(os.getenv("SHIJU_AGENT_USER_CONCURRENCY", "2")),
+            agent_daily_quota=int(os.getenv("SHIJU_AGENT_DAILY_QUOTA", "200")),
         )

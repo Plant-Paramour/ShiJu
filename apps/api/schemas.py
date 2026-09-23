@@ -21,6 +21,7 @@ class AgentChatModel(BaseModel):
     message: str = Field(min_length=1, max_length=12000)
     session_id: str | None = Field(default=None, max_length=128)
     conversation_id: str | None = Field(default=None, max_length=128)
+    model: str | None = Field(default=None, max_length=120)
 
 
 class AgentProposalSubmitModel(BaseModel):

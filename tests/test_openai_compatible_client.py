@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from apps.agent.openai_client import OpenAICompatibleChatModel, chat_completions_url
+from apps.agent.transport import JsonTransportError
 from apps.agent.sse import iter_sse_lines, merge_openai_stream
 
 
@@ -60,3 +61,25 @@ def test_openai_sse_merges_text_and_split_tool_arguments():
     finished = next(event for event in events if event.get("type") == "turn.finished")
     assert finished["tool_calls"][0]["id"] == "call-1"
     assert finished["tool_calls"][0]["function"]["arguments"] == '{"text":"春"}'
+
+
+def test_stream_falls_back_to_non_stream_response():
+    calls = []
+
+    def transport(method, url, headers, payload, timeout_seconds):
+        calls.append(payload["stream"])
+        return {"choices": [{"message": {"role": "assistant", "content": "普通回复"}}]}
+
+    def stream_transport(*args):
+        raise JsonTransportError("stream unsupported", status_code=400)
+
+    model = OpenAICompatibleChatModel(
+        base_url="https://example.com/v1", api_key="secret", model="m",
+        transport=transport, stream_transport=stream_transport,
+    )
+    events = list(model.stream([], []))
+    assert events == [
+        {"type": "assistant.delta", "text": "普通回复"},
+        {"type": "turn.finished", "finish_reason": "stop", "tool_calls": []},
+    ]
+    assert calls == [False]

@@ -36,6 +36,7 @@ class _EndpointState:
     failures: int = 0
     successes: int = 0
     latency_ms: list[float] = field(default_factory=list)
+    last_status_code: int | None = None
     cooldown_until: float = 0.0
     semaphore: threading.BoundedSemaphore | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -44,12 +45,45 @@ class _EndpointState:
         return (self.config.supports_stream if needs_stream else self.config.supports_tools) and now >= self.cooldown_until and self.active < self.config.max_concurrency
 
 
+class _RoutedModel(ChatModel):
+    def __init__(self, gateway: "ModelGateway", model: str):
+        self._gateway = gateway
+        self._model = model
+
+    def complete(self, messages, tools):
+        return self._gateway._call("complete", messages, tools, preferred_model=self._model)
+
+    def stream(self, messages, tools):
+        def generate():
+            attempted: set[int] = set()
+            last_error: Exception | None = None
+            while len(attempted) < self._gateway._max_attempts:
+                state = self._gateway._select(attempted, needs_stream=True, preferred_model=self._model)
+                if state is None:
+                    break
+                attempted.add(id(state))
+                try:
+                    yield from self._gateway._invoke(state, "stream", messages, tools)
+                    return
+                except Exception as exc:
+                    last_error = exc
+                    if "已开始后中断" in str(exc) or not self._gateway._retryable(exc):
+                        raise ChatModelError(f"模型流式响应中断: {exc}") from exc
+            raise ChatModelError(f"模型网关流式请求无可用端点: {last_error}") from last_error
+        return generate()
+
+
 class ModelGateway(ChatModel):
     """兼容 ChatModel 的端点池，默认保守地只重试可切换的上游故障。"""
 
     def __init__(self, endpoints: Sequence[EndpointConfig], *, max_attempts: int = 3, clock=time.monotonic):
         if not endpoints:
             raise ValueError("Model Gateway 至少需要一个端点")
+        for endpoint in endpoints:
+            if endpoint.tier not in {"primary", "secondary", "emergency"}:
+                raise ValueError(f"未知端点层级: {endpoint.tier}")
+            if endpoint.max_concurrency < 1 or endpoint.weight < 1 or endpoint.timeout_seconds <= 0:
+                raise ValueError(f"端点 {endpoint.provider_id} 的并发、权重和超时必须为正数")
         self._states = [_EndpointState(e, semaphore=threading.BoundedSemaphore(e.max_concurrency)) for e in endpoints]
         self._max_attempts = max(1, max_attempts)
         self._clock = clock
@@ -61,7 +95,14 @@ class ModelGateway(ChatModel):
         for item in data.get("endpoints", []):
             config = dict(item)
             config.setdefault("secret_ref", "")
-            configs.append(EndpointConfig(**config))
+            models = config.pop("models", None)
+            if models is not None:
+                if not isinstance(models, list) or not models or not all(isinstance(model, str) and model.strip() for model in models):
+                    raise ValueError(f"端点 {config.get('provider_id', '')} 的 models 必须是非空字符串数组")
+                for model in models:
+                    configs.append(EndpointConfig(**config, model=model.strip()))
+            else:
+                configs.append(EndpointConfig(**config))
         return cls(configs, max_attempts=max_attempts)
 
     @classmethod
@@ -73,11 +114,14 @@ class ModelGateway(ChatModel):
     def complete(self, messages: Sequence[Mapping[str, Any]], tools: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         return self._call("complete", messages, tools)
 
-    def _call(self, method: str, messages, tools):
+    def for_model(self, model: str | None):
+        return _RoutedModel(self, model) if model else self
+
+    def _call(self, method: str, messages, tools, preferred_model: str | None = None):
         attempted: set[int] = set()
         last_error: Exception | None = None
         for _ in range(self._max_attempts):
-            state = self._select(attempted, needs_stream=method == "stream")
+            state = self._select(attempted, needs_stream=method == "stream", preferred_model=preferred_model)
             if state is None:
                 break
             attempted.add(id(state))
@@ -93,6 +137,7 @@ class ModelGateway(ChatModel):
         # Generator creation is lazy so errors are delivered to the existing SSE path.
         def generate():
             attempted: set[int] = set()
+            last_error: Exception | None = None
             while len(attempted) < self._max_attempts:
                 state = self._select(attempted, needs_stream=True)
                 if state is None:
@@ -102,15 +147,16 @@ class ModelGateway(ChatModel):
                     yield from self._invoke(state, "stream", messages, tools)
                     return
                 except Exception as exc:
+                    last_error = exc
                     if "已开始后中断" in str(exc) or not self._retryable(exc):
                         raise ChatModelError(f"模型流式响应中断: {exc}") from exc
-            raise ChatModelError("模型网关流式请求无可用端点")
+            raise ChatModelError(f"模型网关流式请求无可用端点: {last_error}") from last_error
         return generate()
 
-    def _select(self, attempted: set[int], *, needs_stream: bool) -> _EndpointState | None:
+    def _select(self, attempted: set[int], *, needs_stream: bool, preferred_model: str | None = None) -> _EndpointState | None:
         now = self._clock()
         tiers = {"primary": 0, "secondary": 1, "emergency": 2}
-        candidates = [s for s in self._states if id(s) not in attempted and s.available(now, needs_stream)]
+        candidates = [s for s in self._states if id(s) not in attempted and s.available(now, needs_stream) and (preferred_model is None or s.config.model == preferred_model)]
         if not candidates:
             return None
         candidates.sort(key=lambda s: (tiers.get(s.config.tier, 9), s.config.priority, -s.config.weight))
@@ -142,6 +188,7 @@ class ModelGateway(ChatModel):
                         with state.lock:
                             state.successes += 1
                             state.failures = 0
+                            state.latency_ms.append((self._clock() - started) * 1000)
                     except Exception as exc:
                         with state.lock:
                             state.failures += 1
@@ -187,8 +234,12 @@ class ModelGateway(ChatModel):
     @staticmethod
     def _retryable(exc: Exception) -> bool:
         if isinstance(exc, (JsonTransportError, ChatModelError)):
-            return getattr(exc, "status_code", None) is None or getattr(exc, "status_code", None) in {408, 425, 429, 500, 502, 503, 504}
+            if "密钥未配置" in str(exc):
+                return False
+            # 4xx compatibility/auth errors should move to another complete
+            # URL+key+model combination; never retry the same endpoint blindly.
+            return getattr(exc, "status_code", None) is None or getattr(exc, "status_code", None) in {400, 401, 403, 408, 425, 429, 500, 502, 503, 504}
         return isinstance(exc, (OSError, TimeoutError))
 
     def status(self) -> list[dict[str, Any]]:
-        return [{"provider_id": s.config.provider_id, "model": s.config.model, "tier": s.config.tier, "active": s.active, "failures": s.failures, "successes": s.successes, "cooldown_until": s.cooldown_until} for s in self._states]
+        return [{"provider_id": s.config.provider_id, "model": s.config.model, "tier": s.config.tier, "active": s.active, "failures": s.failures, "successes": s.successes, "latency_ms": list(s.latency_ms[-20:]), "last_status_code": s.last_status_code, "cooldown_until": s.cooldown_until} for s in self._states]
