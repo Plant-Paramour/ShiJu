@@ -1,0 +1,194 @@
+from __future__ import annotations
+
+import os
+import random
+import threading
+import time
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Mapping, Sequence
+
+from .openai_client import ChatModel, ChatModelError, OpenAICompatibleChatModel
+from .transport import JsonTransportError
+
+
+@dataclass(frozen=True)
+class EndpointConfig:
+    provider_id: str
+    base_url: str
+    model: str
+    secret_ref: str
+    tier: str = "primary"
+    priority: int = 0
+    weight: int = 1
+    max_concurrency: int = 8
+    timeout_seconds: float = 90.0
+    supports_tools: bool = True
+    supports_stream: bool = True
+    cost_level: str = "standard"
+
+
+@dataclass
+class _EndpointState:
+    config: EndpointConfig
+    active: int = 0
+    failures: int = 0
+    successes: int = 0
+    latency_ms: list[float] = field(default_factory=list)
+    cooldown_until: float = 0.0
+    semaphore: threading.BoundedSemaphore | None = None
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def available(self, now: float, needs_stream: bool) -> bool:
+        return (self.config.supports_stream if needs_stream else self.config.supports_tools) and now >= self.cooldown_until and self.active < self.config.max_concurrency
+
+
+class ModelGateway(ChatModel):
+    """兼容 ChatModel 的端点池，默认保守地只重试可切换的上游故障。"""
+
+    def __init__(self, endpoints: Sequence[EndpointConfig], *, max_attempts: int = 3, clock=time.monotonic):
+        if not endpoints:
+            raise ValueError("Model Gateway 至少需要一个端点")
+        self._states = [_EndpointState(e, semaphore=threading.BoundedSemaphore(e.max_concurrency)) for e in endpoints]
+        self._max_attempts = max(1, max_attempts)
+        self._clock = clock
+
+    @classmethod
+    def from_toml(cls, path: str | Path, *, max_attempts: int = 3) -> "ModelGateway":
+        data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+        configs = []
+        for item in data.get("endpoints", []):
+            config = dict(item)
+            config.setdefault("secret_ref", "")
+            configs.append(EndpointConfig(**config))
+        return cls(configs, max_attempts=max_attempts)
+
+    @classmethod
+    def single(cls, *, base_url: str, api_key: str, model: str, timeout_seconds: float = 90.0) -> "ModelGateway":
+        env_name = f"SHIJU_GATEWAY_SECRET_{abs(hash(api_key))}"
+        os.environ.setdefault(env_name, api_key)
+        return cls([EndpointConfig("legacy", base_url, model, env_name, timeout_seconds=timeout_seconds)])
+
+    def complete(self, messages: Sequence[Mapping[str, Any]], tools: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        return self._call("complete", messages, tools)
+
+    def _call(self, method: str, messages, tools):
+        attempted: set[int] = set()
+        last_error: Exception | None = None
+        for _ in range(self._max_attempts):
+            state = self._select(attempted, needs_stream=method == "stream")
+            if state is None:
+                break
+            attempted.add(id(state))
+            try:
+                return self._invoke(state, method, messages, tools)
+            except Exception as exc:
+                last_error = exc
+                if not self._retryable(exc):
+                    break
+        raise ChatModelError(f"模型网关无可用端点: {last_error}") from last_error
+
+    def stream(self, messages: Sequence[Mapping[str, Any]], tools: Sequence[Mapping[str, Any]]):
+        # Generator creation is lazy so errors are delivered to the existing SSE path.
+        def generate():
+            attempted: set[int] = set()
+            while len(attempted) < self._max_attempts:
+                state = self._select(attempted, needs_stream=True)
+                if state is None:
+                    break
+                attempted.add(id(state))
+                try:
+                    yield from self._invoke(state, "stream", messages, tools)
+                    return
+                except Exception as exc:
+                    if "已开始后中断" in str(exc) or not self._retryable(exc):
+                        raise ChatModelError(f"模型流式响应中断: {exc}") from exc
+            raise ChatModelError("模型网关流式请求无可用端点")
+        return generate()
+
+    def _select(self, attempted: set[int], *, needs_stream: bool) -> _EndpointState | None:
+        now = self._clock()
+        tiers = {"primary": 0, "secondary": 1, "emergency": 2}
+        candidates = [s for s in self._states if id(s) not in attempted and s.available(now, needs_stream)]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda s: (tiers.get(s.config.tier, 9), s.config.priority, -s.config.weight))
+        top = [s for s in candidates if (s.config.tier, s.config.priority) == (candidates[0].config.tier, candidates[0].config.priority)]
+        weights = [max(1, item.config.weight) for item in top]
+        return random.choices(top, weights=weights, k=1)[0]
+
+    def _invoke(self, state: _EndpointState, method: str, messages, tools):
+        key = os.getenv(state.config.secret_ref, "")
+        if not key:
+            raise ChatModelError(f"端点 {state.config.provider_id} 的密钥未配置")
+        model = OpenAICompatibleChatModel(base_url=state.config.base_url, api_key=key, model=state.config.model, timeout_seconds=state.config.timeout_seconds)
+        started = self._clock()
+        assert state.semaphore is not None
+        if not state.semaphore.acquire(timeout=state.config.timeout_seconds):
+            raise ChatModelError(f"端点 {state.config.provider_id} 并发已满")
+        with state.lock:
+            state.active += 1
+        transferred = False
+        try:
+            if method == "stream":
+                iterator = model.stream(messages, tools)
+                def guarded():
+                    emitted = False
+                    try:
+                        for item in iterator:
+                            emitted = True
+                            yield item
+                        with state.lock:
+                            state.successes += 1
+                            state.failures = 0
+                    except Exception as exc:
+                        with state.lock:
+                            state.failures += 1
+                            self._apply_cooldown(state, exc)
+                        if emitted:
+                            raise ChatModelError("模型流式响应已开始后中断") from exc
+                        raise
+                    finally:
+                        with state.lock:
+                            state.active -= 1
+                        state.semaphore.release()
+                # Ownership transfers to the iterator until it is consumed or closed.
+                transferred = True
+                return guarded()
+            result = getattr(model, method)(messages, tools)
+            with state.lock:
+                state.successes += 1
+                state.failures = 0
+                state.latency_ms.append((self._clock() - started) * 1000)
+            return result
+        except Exception as exc:
+            with state.lock:
+                state.failures += 1
+                if getattr(exc, "status_code", None) in {401, 403}:
+                    state.cooldown_until = self._clock() + 3600
+                self._apply_cooldown(state, exc)
+            raise
+        finally:
+            if not transferred:
+                with state.lock:
+                    state.active -= 1
+                state.semaphore.release()
+
+    def _apply_cooldown(self, state: _EndpointState, exc: Exception) -> None:
+        status_code = getattr(exc, "status_code", None)
+        if status_code in {401, 403}:
+            state.cooldown_until = self._clock() + 3600
+        elif status_code == 429:
+            state.cooldown_until = self._clock() + (getattr(exc, "retry_after", None) or 30)
+        elif state.failures >= 3:
+            state.cooldown_until = self._clock() + 30
+
+    @staticmethod
+    def _retryable(exc: Exception) -> bool:
+        if isinstance(exc, (JsonTransportError, ChatModelError)):
+            return getattr(exc, "status_code", None) is None or getattr(exc, "status_code", None) in {408, 425, 429, 500, 502, 503, 504}
+        return isinstance(exc, (OSError, TimeoutError))
+
+    def status(self) -> list[dict[str, Any]]:
+        return [{"provider_id": s.config.provider_id, "model": s.config.model, "tier": s.config.tier, "active": s.active, "failures": s.failures, "successes": s.successes, "cooldown_until": s.cooldown_until} for s in self._states]

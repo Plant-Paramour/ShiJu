@@ -13,6 +13,8 @@ class AgentSettings:
     poetry_api_token: str = "change-me-agent"
     request_timeout_seconds: float = 90.0
     max_tool_rounds: int = 8
+    gateway_config_path: str = ""
+    gateway_max_attempts: int = 3
 
     @classmethod
     def from_env(cls) -> "AgentSettings":
@@ -40,5 +42,7 @@ class AgentSettings:
             poetry_api_token=os.getenv("SHIJU_AGENT_TOKEN", "change-me-agent").strip(),
             request_timeout_seconds=float(os.getenv("SHIJU_LLM_TIMEOUT_SECONDS", "90")),
             max_tool_rounds=int(os.getenv("SHIJU_AGENT_MAX_TOOL_ROUNDS", "8")),
+            gateway_config_path=os.getenv("SHIJU_MODEL_GATEWAY_CONFIG", "").strip(),
+            gateway_max_attempts=int(os.getenv("SHIJU_MODEL_GATEWAY_MAX_ATTEMPTS", "3")),
         )
 

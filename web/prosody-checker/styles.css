@@ -2184,10 +2184,12 @@ input:focus {
 
   .profile-heading { display: block; }
   .profile-heading__stats { margin-top: 18px; }
-  .profile-layout { grid-template-columns: 1fr; gap: 18px; }
-  .profile-sidebar { display: flex; gap: 4px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--site-line); padding: 0 0 8px; }
-  .profile-tab { flex: 0 0 auto; border-left: 0; border-bottom: 2px solid transparent; padding: 8px 10px; white-space: nowrap; }
-  .profile-tab:hover, .profile-tab.is-active { border-left-color: transparent; border-bottom-color: var(--site-red); }
+  .profile-layout { grid-template-columns: 154px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .profile-sidebar { display: grid; gap: 4px; border-right: 1px solid var(--site-line); border-bottom: 0; padding: 0 12px 0 0; }
+  .profile-tab { min-width: 0; padding: 10px 8px; border-left: 2px solid transparent; white-space: normal; }
+  .profile-tab:hover, .profile-tab.is-active { border-left-color: var(--site-red); border-bottom-color: transparent; }
+  .profile-tab--danger { margin-top: 8px; padding-top: 14px; }
+  .profile-content { min-width: 0; }
   .profile-panel__heading { align-items: start; flex-direction: column; }
   .profile-row { align-items: start; flex-wrap: wrap; }
   .profile-row select { max-width: 145px; }

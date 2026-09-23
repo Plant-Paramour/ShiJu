@@ -1,0 +1,28 @@
+# 端点密钥只通过环境变量注入，配置文件不得保存明文 Key。
+[[endpoints]]
+provider_id = "primary-openai-compatible"
+base_url = "https://provider.example.com/v1"
+model = "model-name"
+secret_ref = "SHIJU_LLM_PRIMARY_KEY"
+tier = "primary"
+priority = 10
+weight = 1
+max_concurrency = 8
+timeout_seconds = 90
+supports_tools = true
+supports_stream = true
+cost_level = "standard"
+
+[[endpoints]]
+provider_id = "secondary-openai-compatible"
+base_url = "https://backup.example.com/v1"
+model = "backup-model"
+secret_ref = "SHIJU_LLM_SECONDARY_KEY"
+tier = "secondary"
+priority = 10
+weight = 1
+max_concurrency = 4
+timeout_seconds = 120
+supports_tools = true
+supports_stream = true
+cost_level = "higher"

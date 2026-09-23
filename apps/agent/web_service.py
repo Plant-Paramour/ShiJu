@@ -15,6 +15,7 @@ from shiju.contracts import JobKind
 from .framework import AgentSession
 from .jobs import PoetryJobs
 from .openai_client import ChatModel, OpenAICompatibleChatModel
+from .gateway import ModelGateway
 from .settings import AgentSettings
 from .tools import AgentToolbox
 
@@ -161,12 +162,15 @@ class WebAgentService:
     @classmethod
     def from_env(cls, repository, gpu_provider, project_root: str | Path):
         settings = AgentSettings.from_env()
-        model = OpenAICompatibleChatModel(
-            base_url=settings.llm_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.llm_model,
-            timeout_seconds=settings.request_timeout_seconds,
-        )
+        if settings.gateway_config_path:
+            model = ModelGateway.from_toml(settings.gateway_config_path, max_attempts=settings.gateway_max_attempts)
+        else:
+            model = ModelGateway.single(
+                base_url=settings.llm_base_url,
+                api_key=settings.llm_api_key,
+                model=settings.llm_model,
+                timeout_seconds=settings.request_timeout_seconds,
+            )
         jobs = RepositoryPoetryJobs(repository, gpu_provider)
         return cls(
             model,

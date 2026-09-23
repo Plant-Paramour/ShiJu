@@ -28,12 +28,14 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
     from .routes.admin import router as admin_router
 
     active = settings or ApiSettings.from_env()
-    database = Database(active.database_path)
+    database = Database(active.database_url or active.database_path)
     database.initialize()
     users = UserRepository(database)
     users.seed_defaults()
 
     app = FastAPI(title="诗矩工具服务", version="0.2.0")
+    # 兼容当前 FastAPI/Starlette 版本，避免依赖已移除的 add_event_handler。
+    app.router.on_shutdown.append(database.close)
     app.state.settings = active
     app.state.jobs = JobRepository(database)
     app.state.users = users
@@ -65,11 +67,20 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
 
     @app.get("/health/ready", tags=["health"])
     def ready():
-        return {
-            "status": "ok",
+        database_status = "ok"
+        try:
+            database.check()
+        except Exception:
+            database_status = "error"
+        payload = {
+            "status": "ok" if database_status == "ok" else "degraded",
+            "database": database_status,
             "gpu_provider": app.state.gpu_provider.status(),
             "worker_online": app.state.jobs.has_live_worker(),
         }
+        if database_status != "ok":
+            return JSONResponse(status_code=503, content=payload)
+        return payload
 
     app.include_router(public_router)
     app.include_router(worker_router)

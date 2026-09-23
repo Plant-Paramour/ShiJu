@@ -9,7 +9,10 @@ from collections.abc import Iterator
 
 
 class JsonTransportError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None, retry_after: float | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
 
 
 def request_json(
@@ -28,7 +31,12 @@ def request_json(
             body = response.read().decode("utf-8")
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:1000]
-        raise JsonTransportError(f"HTTP {exc.code}: {detail}") from exc
+        retry_after = exc.headers.get("Retry-After")
+        try:
+            retry_after = float(retry_after) if retry_after else None
+        except ValueError:
+            retry_after = None
+        raise JsonTransportError(f"HTTP {exc.code}: {detail}", status_code=exc.code, retry_after=retry_after) from exc
     except URLError as exc:
         raise JsonTransportError(str(exc.reason)) from exc
     try:
@@ -47,7 +55,8 @@ def request_sse(method: str, url: str, headers: Mapping[str, str], payload: Mapp
         response = urlopen(request, timeout=timeout_seconds)
     except (HTTPError, URLError) as exc:
         detail = exc.read().decode("utf-8", errors="replace") if isinstance(exc, HTTPError) else str(exc)
-        raise JsonTransportError(f"SSE 请求失败: {detail}") from exc
+        code = exc.code if isinstance(exc, HTTPError) else None
+        raise JsonTransportError(f"SSE 请求失败: {detail}", status_code=code) from exc
     def lines():
         try:
             for line in response:

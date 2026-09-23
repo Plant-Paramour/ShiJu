@@ -16,7 +16,10 @@ class ChatModel(Protocol):
 
 
 class ChatModelError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None, retry_after: float | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
 
 
 def chat_completions_url(base_url: str) -> str:
@@ -72,7 +75,7 @@ class OpenAICompatibleChatModel:
                 self._timeout_seconds,
             )
         except (JsonTransportError, OSError, ValueError) as exc:
-            raise ChatModelError(f"大模型 API 请求失败: {exc}") from exc
+            raise ChatModelError(f"大模型 API 请求失败: {exc}", status_code=getattr(exc, "status_code", None), retry_after=getattr(exc, "retry_after", None)) from exc
 
         try:
             message = data["choices"][0]["message"]
@@ -92,4 +95,4 @@ class OpenAICompatibleChatModel:
             chunks = stream_transport("POST", self._url, {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}, payload, self._timeout_seconds)
             return merge_openai_stream(iter_sse_lines(chunks))
         except (JsonTransportError, OSError, ValueError) as exc:
-            raise ChatModelError(f"大模型 SSE 请求失败: {exc}") from exc
+            raise ChatModelError(f"大模型 SSE 请求失败: {exc}", status_code=getattr(exc, "status_code", None), retry_after=getattr(exc, "retry_after", None)) from exc

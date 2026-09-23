@@ -5,18 +5,17 @@ from pathlib import Path
 from .framework import AgentSession
 from .jobs import HttpPoetryJobs
 from .openai_client import OpenAICompatibleChatModel
+from .gateway import ModelGateway
 from .settings import AgentSettings
 from .tools import AgentToolbox
 
 
 def create_session(settings: AgentSettings | None = None) -> AgentSession:
     active = settings or AgentSettings.from_env()
-    model = OpenAICompatibleChatModel(
-        base_url=active.llm_base_url,
-        api_key=active.llm_api_key,
-        model=active.llm_model,
-        timeout_seconds=active.request_timeout_seconds,
-    )
+    if active.gateway_config_path:
+        model = ModelGateway.from_toml(active.gateway_config_path, max_attempts=active.gateway_max_attempts)
+    else:
+        model = ModelGateway.single(base_url=active.llm_base_url, api_key=active.llm_api_key, model=active.llm_model, timeout_seconds=active.request_timeout_seconds)
     jobs = HttpPoetryJobs(
         base_url=active.poetry_api_base_url,
         token=active.poetry_api_token,

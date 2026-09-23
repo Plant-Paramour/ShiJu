@@ -44,7 +44,7 @@ class ForumRepository:
                 COALESCE(p.permission, 'read') AS permission FROM forum_sections s
                 LEFT JOIN forum_threads t ON t.section_id=s.id AND t.deleted_at IS NULL
                 LEFT JOIN forum_replies r ON r.thread_id=t.id AND r.deleted_at IS NULL
-                LEFT JOIN forum_permissions p ON p.section_id=s.id AND p.user_id=? GROUP BY s.id
+                LEFT JOIN forum_permissions p ON p.section_id=s.id AND p.user_id=? GROUP BY s.id, p.permission
                 ORDER BY s.sort_order, s.created_at""", (user_id,)).fetchall()
             return [{**dict(row), "moderator_count": db.execute("SELECT COUNT(*) FROM forum_section_moderators WHERE section_id=?", (row["id"],)).fetchone()[0]} for row in rows]
 
@@ -115,7 +115,9 @@ class ForumRepository:
         if q:
             pattern = f"%{q.strip()}%"; clauses.append("(t.title LIKE ? OR t.content LIKE ? OR u.username LIKE ? OR COALESCE(u.display_name,'') LIKE ? OR EXISTS (SELECT 1 FROM forum_thread_tags st JOIN forum_tags sq ON sq.id=st.tag_id WHERE st.thread_id=t.id AND sq.name LIKE ?))"); args.extend([pattern] * 5)
         if tag: clauses.append("EXISTS (SELECT 1 FROM forum_thread_tags st JOIN forum_tags sq ON sq.id=st.tag_id WHERE st.thread_id=t.id AND sq.slug=?)"); args.append(tag)
-        where = " AND ".join(clauses); order = {"hot": "(t.view_count + reply_count_cache * 4) DESC, t.updated_at DESC", "replies": "reply_count_cache DESC, t.updated_at DESC", "views": "t.view_count DESC, t.updated_at DESC"}.get(sort, "t.updated_at DESC")
+        where = " AND ".join(clauses)
+        reply_count = "(SELECT COUNT(*) FROM forum_replies rr WHERE rr.thread_id=t.id AND rr.deleted_at IS NULL)"
+        order = {"hot": f"(t.view_count + {reply_count} * 4) DESC, t.updated_at DESC", "replies": f"{reply_count} DESC, t.updated_at DESC", "views": "t.view_count DESC, t.updated_at DESC"}.get(sort, "t.updated_at DESC")
         with self.database.connect() as db:
             total = db.execute(f"SELECT COUNT(*) FROM forum_threads t JOIN users u ON u.id=t.author_id WHERE {where}", args).fetchone()[0]
             rows = db.execute(f"""SELECT t.*,u.username,u.display_name,u.avatar_url,(SELECT COUNT(*) FROM forum_replies r WHERE r.thread_id=t.id AND r.deleted_at IS NULL) AS reply_count_cache
