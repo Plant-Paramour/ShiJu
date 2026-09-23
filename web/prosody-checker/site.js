@@ -342,6 +342,14 @@ function setChatTitle(title = "新建对话") {
   chatTitle.textContent = value;
   chatTitle.title = value;
 }
+const chatSidebarToggle = document.querySelector("#chat-sidebar-toggle");
+const chatSidebarReopen = document.querySelector("#chat-sidebar-reopen");
+function setChatSidebarCollapsed(collapsed) {
+  chatLayout?.classList.toggle("is-sidebar-collapsed", collapsed);
+  chatSidebarToggle?.setAttribute("aria-expanded", String(!collapsed));
+  chatSidebarReopen?.setAttribute("aria-expanded", String(collapsed));
+}
+if (window.matchMedia("(max-width: 760px)").matches) setChatSidebarCollapsed(true);
 function syncChatContentWidth() {
   if (!chatThreadScroll || !chatLayout) return;
   const available = chatThreadScroll.clientWidth;
@@ -993,9 +1001,7 @@ function resetAuthenticatedUi() {
   chatBusy = false;
   chatThread.innerHTML = initialThreadMarkup;
   chatInput.value = "";
-  chatLayout.classList.remove("is-sidebar-collapsed");
-  document.querySelector("#chat-sidebar-toggle")?.setAttribute("aria-expanded", "true");
-  document.querySelector("#chat-sidebar-reopen")?.setAttribute("aria-expanded", "false");
+  setChatSidebarCollapsed(window.matchMedia("(max-width: 760px)").matches);
   conversationSearch.hidden = true;
   conversationSearchInput.value = "";
   document.querySelector("#conversation-list").innerHTML = "<p>登录后查看历史对话</p>";
@@ -1575,16 +1581,12 @@ document.querySelector("#conversation-search-toggle")?.addEventListener("click",
 });
 conversationSearchInput?.addEventListener("input", filterConversations);
 document.querySelector("#chat-sidebar-toggle")?.addEventListener("click", () => {
-  chatLayout.classList.add("is-sidebar-collapsed");
-  document.querySelector("#chat-sidebar-toggle").setAttribute("aria-expanded", "false");
-  document.querySelector("#chat-sidebar-reopen").setAttribute("aria-expanded", "true");
-  document.querySelector("#chat-sidebar-reopen").focus();
+  setChatSidebarCollapsed(true);
+  chatSidebarReopen?.focus();
 });
 document.querySelector("#chat-sidebar-reopen")?.addEventListener("click", () => {
-  chatLayout.classList.remove("is-sidebar-collapsed");
-  document.querySelector("#chat-sidebar-toggle").setAttribute("aria-expanded", "true");
-  document.querySelector("#chat-sidebar-reopen").setAttribute("aria-expanded", "false");
-  document.querySelector("#chat-sidebar-toggle").focus();
+  setChatSidebarCollapsed(false);
+  chatSidebarToggle?.focus();
 });
 
 document.querySelector("#new-chat").addEventListener("click", () => {
