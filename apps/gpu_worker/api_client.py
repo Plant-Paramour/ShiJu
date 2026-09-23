@@ -18,11 +18,15 @@ class WorkerApiClient:
             {"worker_id": worker_id, "capabilities": capabilities, "wait_seconds": 15},
         )
 
-    def heartbeat(self, job_id: str, worker_id: str) -> None:
-        self._post(
+    def heartbeat(self, job_id: str, worker_id: str) -> bool:
+        result = self._post(
             f"/internal/v1/jobs/{job_id}/heartbeat",
             {"worker_id": worker_id},
         )
+        return bool(result and result.get("cancel_requested"))
+
+    def acknowledge_cancel(self, job_id: str, worker_id: str) -> None:
+        self._post(f"/internal/v1/jobs/{job_id}/cancelled", {"worker_id": worker_id})
 
     def complete(self, job_id: str, worker_id: str, result: dict[str, Any]) -> None:
         self._post(

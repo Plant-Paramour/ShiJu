@@ -233,6 +233,8 @@ class GenerationEngine:
                 if request.meter_type == "排律"
                 else PailvOptions()
             ),
+            rhyme_mode=request.rhyme_mode,
+            rhyme_parts=dict(request.rhyme_parts),
         )
         context = TaskContext(
             tokenizer=self.runner.tokenizer,

@@ -31,6 +31,27 @@ def test_gateway_fails_over_by_tier(monkeypatch):
     assert gateway.status()[0]["failures"] == 1
 
 
+def test_gateway_records_rate_limit_and_cools_endpoint(monkeypatch):
+    class RateLimited(FakeModel):
+        def complete(self, messages, tools):
+            raise JsonTransportError("slow down", status_code=429, retry_after=45)
+
+    monkeypatch.setattr("apps.agent.gateway.OpenAICompatibleChatModel", RateLimited)
+    os.environ["GW_RATE_LIMITED"] = "key"
+    now = [100.0]
+    gateway = ModelGateway(
+        [EndpointConfig("limited", "https://limited", "m", "GW_RATE_LIMITED")],
+        clock=lambda: now[0],
+    )
+    with pytest.raises(Exception):
+        gateway.complete([], [])
+    status = gateway.status()[0]
+    assert status["last_status_code"] == 429
+    assert status["cooldown_until"] == 145.0
+    with pytest.raises(Exception, match="无可用端点"):
+        gateway.complete([], [])
+
+
 def test_gateway_does_not_retry_client_error(monkeypatch):
     class ClientError(FakeModel):
         def complete(self, messages, tools):
@@ -111,6 +132,13 @@ def test_gateway_expands_models_per_url_and_key(tmp_path, monkeypatch):
 def test_gateway_rejects_invalid_endpoint_config():
     with pytest.raises(ValueError):
         ModelGateway([EndpointConfig("bad", "https://x", "m", "KEY", tier="unknown")])
+
+
+def test_gateway_rejects_incomplete_endpoint_and_attempt_config():
+    with pytest.raises(ValueError, match="provider_id"):
+        ModelGateway([EndpointConfig("", "https://x", "m", "KEY")])
+    with pytest.raises(ValueError, match="尝试次数"):
+        ModelGateway([EndpointConfig("p", "https://x", "m", "KEY")], max_attempts=0)
 
 
 def test_gateway_does_not_retry_missing_secret(monkeypatch):

@@ -14,6 +14,10 @@ from .api_client import WorkerApiClient
 LOGGER = logging.getLogger(__name__)
 
 
+class WorkerCancelled(RuntimeError):
+    pass
+
+
 class GpuWorker:
     def __init__(
         self,
@@ -52,9 +56,10 @@ class GpuWorker:
     def _execute(self, job: dict[str, Any]) -> None:
         job_id = job["job_id"]
         heartbeat_stop = threading.Event()
+        cancel_requested = threading.Event()
         heartbeat = threading.Thread(
             target=self._heartbeat_loop,
-            args=(job_id, heartbeat_stop),
+            args=(job_id, heartbeat_stop, cancel_requested),
             daemon=True,
         )
         heartbeat.start()
@@ -65,11 +70,17 @@ class GpuWorker:
                 result = self.process_runner(
                     job["kind"], job["request"],
                     lambda event_type, payload: self._report_candidate_event(job_id, event_type, payload),
+                    cancel_requested.is_set,
                 )
             else:
                 raise RuntimeError("GPU Worker 未配置任务执行子进程")
+            if cancel_requested.is_set():
+                raise WorkerCancelled("任务已由用户取消")
             self.client.complete(job_id, self.worker_id, result)
             LOGGER.info("任务完成: job_id=%s", job_id)
+        except WorkerCancelled:
+            self.client.acknowledge_cancel(job_id, self.worker_id)
+            LOGGER.info("任务已取消: job_id=%s", job_id)
         except Exception as exc:
             LOGGER.exception("任务执行失败", extra={"job_id": job_id})
             code = str(getattr(exc, "code", "WORKER_EXECUTION_ERROR"))
@@ -105,9 +116,11 @@ class GpuWorker:
             return
         self.client.candidate_update(job_id, self.worker_id, ordinal, **fields)
 
-    def _heartbeat_loop(self, job_id: str, stop: threading.Event) -> None:
+    def _heartbeat_loop(self, job_id: str, stop: threading.Event, cancel_requested: threading.Event) -> None:
         while not stop.wait(self.heartbeat_seconds):
             try:
-                self.client.heartbeat(job_id, self.worker_id)
+                if self.client.heartbeat(job_id, self.worker_id):
+                    cancel_requested.set()
+                    return
             except Exception:
                 LOGGER.exception("任务心跳失败", extra={"job_id": job_id})

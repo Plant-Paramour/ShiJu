@@ -45,7 +45,7 @@ async def claim_job(
         await asyncio.sleep(1)
 
 
-@router.post("/jobs/{job_id}/heartbeat", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/jobs/{job_id}/heartbeat")
 def heartbeat(
     job_id: str,
     body: WorkerIdentityModel,
@@ -54,11 +54,26 @@ def heartbeat(
 ):
     _authorize(request, authorization)
     try:
-        request.app.state.jobs.heartbeat(
+        cancel_requested = request.app.state.jobs.heartbeat(
             job_id,
             body.worker_id,
             lease_seconds=request.app.state.settings.worker_lease_seconds,
         )
+    except JobOwnershipError as exc:
+        raise HTTPException(status_code=409, detail="job ownership lost") from exc
+    return {"cancel_requested": cancel_requested}
+
+
+@router.post("/jobs/{job_id}/cancelled", status_code=status.HTTP_204_NO_CONTENT)
+def acknowledge_cancel(
+    job_id: str,
+    body: WorkerIdentityModel,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    _authorize(request, authorization)
+    try:
+        request.app.state.jobs.acknowledge_cancel(job_id, body.worker_id)
     except JobOwnershipError as exc:
         raise HTTPException(status_code=409, detail="job ownership lost") from exc
 

@@ -81,6 +81,40 @@ def test_async_job_contract_from_submission_through_worker_completion(tmp_path):
     assert status.json()["result"] == {"text": "春山如画"}
 
 
+def test_running_job_can_be_cancelled_cooperatively(tmp_path):
+    client = _client(tmp_path)
+    agent_headers = {"Authorization": "Bearer agent-secret"}
+    worker_headers = {"Authorization": "Bearer worker-secret"}
+    submitted = client.post(
+        "/v1/poetry/jobs/generate",
+        headers=agent_headers,
+        json={"meter_type": "唐诗", "form_name": "五言绝句", "theme": "春山"},
+    ).json()
+    client.post(
+        "/internal/v1/workers/claim",
+        headers=worker_headers,
+        json={"worker_id": "t4-1", "capabilities": {}, "wait_seconds": 0},
+    )
+
+    requested = client.delete(f"/v1/poetry/jobs/{submitted['job_id']}", headers=agent_headers)
+    assert requested.status_code == 200
+    assert requested.json()["status"] == "running"
+    heartbeat = client.post(
+        f"/internal/v1/jobs/{submitted['job_id']}/heartbeat",
+        headers=worker_headers,
+        json={"worker_id": "t4-1"},
+    )
+    assert heartbeat.json() == {"cancel_requested": True}
+    acknowledged = client.post(
+        f"/internal/v1/jobs/{submitted['job_id']}/cancelled",
+        headers=worker_headers,
+        json={"worker_id": "t4-1"},
+    )
+    assert acknowledged.status_code == 204
+    state = client.get(f"/v1/poetry/jobs/{submitted['job_id']}", headers=agent_headers)
+    assert state.json()["status"] == "cancelled"
+
+
 def test_api_auth_and_openapi_tool_routes(tmp_path):
     client = _client(tmp_path)
     assert client.get("/health/live").status_code == 200

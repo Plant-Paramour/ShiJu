@@ -56,6 +56,7 @@ deploy/systemd/                                     两端进程配置
 | `generate_poem` | `POST /v1/poetry/jobs/generate` | 提交整首生成 |
 | `rewrite_poem_lines` | `POST /v1/poetry/jobs/rewrite` | 提交指定句重写 |
 | `get_poetry_job` | `GET /v1/poetry/jobs/{job_id}` | 查询状态和结果 |
+| `cancel_poetry_job` | `DELETE /v1/poetry/jobs/{job_id}` | 取消排队中或运行中的任务 |
 
 提交接口返回 HTTP `202`：
 
@@ -74,11 +75,16 @@ deploy/systemd/                                     两端进程配置
 
 - `POST /internal/v1/workers/claim`
 - `POST /internal/v1/jobs/{job_id}/heartbeat`
+- `POST /internal/v1/jobs/{job_id}/cancelled`
 - `POST /internal/v1/jobs/{job_id}/complete`
 - `POST /internal/v1/jobs/{job_id}/fail`
 
 任务状态为 `queued`、`running`、`succeeded`、`failed`、`cancelled`。Worker 单任务
 并发，心跳间隔 15 秒，默认租约 300 秒，过期任务最多尝试两次。
+
+排队任务会立即进入 `cancelled`。运行中任务采用协作式取消：控制面先记录取消请求，
+Worker 在下一次心跳收到信号后终止生成子进程并确认取消，通常不超过一个心跳间隔。
+若 Worker 在确认前失联，租约过期恢复会将待取消任务收敛为 `cancelled`，不会重新排队。
 
 ## 4. 引导式重写
 

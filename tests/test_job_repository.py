@@ -31,6 +31,30 @@ def test_job_submission_is_idempotent_and_conflicts_on_changed_payload(tmp_path)
         repository.submit("generate", {"theme": "秋"}, idempotency_key="same")
 
 
+def test_queued_job_can_be_cancelled_and_is_not_claimed(tmp_path):
+    repository, _ = _repository(tmp_path)
+    submitted = repository.submit("generate", {"theme": "春"})
+
+    cancelled = repository.cancel(submitted.id)
+
+    assert cancelled.status == "cancelled"
+    assert repository.claim("worker-1", {}, lease_seconds=30) is None
+    with pytest.raises(ValueError, match="已经结束"):
+        repository.cancel(submitted.id)
+
+
+def test_running_job_cancellation_is_acknowledged_by_worker(tmp_path):
+    repository, _ = _repository(tmp_path)
+    submitted = repository.submit("generate", {"theme": "春"})
+    repository.claim("worker-1", {}, lease_seconds=30)
+
+    requested = repository.cancel(submitted.id)
+    assert requested.status == "running"
+    assert repository.heartbeat(submitted.id, "worker-1", lease_seconds=30) is True
+    repository.acknowledge_cancel(submitted.id, "worker-1")
+    assert repository.get(submitted.id).status == "cancelled"
+
+
 def test_worker_claim_heartbeat_and_completion(tmp_path):
     repository, clock = _repository(tmp_path)
     submitted = repository.submit("generate", {"theme": "春"})

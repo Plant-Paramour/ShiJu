@@ -65,7 +65,6 @@
       <button type="button" data-profile-drawer-tab="account"><span class="drawer-menu__icon" aria-hidden="true">我</span><span>我的信息</span></button>
       <button type="button" data-profile-drawer-tab="poems"><span class="drawer-menu__icon" aria-hidden="true">作</span><span>我的作品</span></button>
       <button type="button" data-profile-drawer-tab="favorites"><span class="drawer-menu__icon" aria-hidden="true">藏</span><span>我的收藏</span></button>
-      <button type="button" data-profile-drawer-tab="collections"><span class="drawer-menu__icon" aria-hidden="true">集</span><span>作品合集</span></button>
       <button type="button" data-profile-drawer-tab="archive"><span class="drawer-menu__icon" aria-hidden="true">档</span><span>归档对话</span></button>
       <button type="button" data-profile-drawer-tab="following"><span class="drawer-menu__icon" aria-hidden="true">友</span><span>关注诗友</span></button>
     </nav>
@@ -213,7 +212,7 @@
             <label class="han-visually-hidden" for="chat-input">输入消息</label>
             <textarea id="chat-input" rows="1" placeholder="写下你的想法……"></textarea>
             <div class="chat-composer__toolbar">
-              <label class="chat-model-picker" title="选择模型"><select id="chat-model" aria-label="选择模型"><option value="deepseek-v3.2-guiji-cc">deepseek-v3.2</option><option value="deepseek-v4-flash-nv-cc">deepseek-v4</option></select></label>
+              <label class="chat-model-picker" title="选择模型"><select id="chat-model" aria-label="选择模型"><option value="deepseek-v3.2-guiji-cc">deepseek-v3.2</option><option value="Qwen/Qwen3-Omni-30B-A3B-Instruct">Qwen3</option></select></label>
               <div class="chat-composer__actions">
                 <label class="chat-attach-button" for="chat-attachment" title="添加图片" aria-label="添加图片"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="8.5" cy="9" r="1.5"></circle><path d="m4.5 17 4.2-4.2 3.2-2.2 5.4 5.2"></path></svg></label>
                 <input id="chat-attachment" type="file" accept="image/jpeg,image/png,image/webp" hidden>
@@ -238,7 +237,6 @@
             <button type="button" class="profile-tab is-active" data-profile-tab="account">我的信息</button>
             <button type="button" class="profile-tab" data-profile-tab="poems">我的作品</button>
             <button type="button" class="profile-tab" data-profile-tab="favorites">收藏</button>
-            <button type="button" class="profile-tab" data-profile-tab="collections">作品合集</button>
             <button type="button" class="profile-tab" data-profile-tab="archive">归档对话</button>
             <button type="button" class="profile-tab" data-profile-tab="following">关注诗友</button>
             <button type="button" class="profile-tab profile-tab--danger" id="profile-logout-button" hidden>退出登录</button>
@@ -249,8 +247,7 @@
               <div class="profile-panel__heading"><div><p class="eyebrow">作品库</p><h2>我的作品</h2></div><div class="profile-filters"><label>分类<select id="profile-work-type"><option value="">全部</option><option>唐诗</option><option>律诗</option><option>宋词</option><option>汉俳</option><option>其他</option></select></label></div></div>
               <div class="profile-grid" id="poem-list"><p class="empty-state">暂无诗作记录。</p></div>
             </section>
-            <section class="profile-panel" data-profile-panel="favorites" hidden><div class="profile-panel__heading"><div><p class="eyebrow">收藏</p><h2>我收藏的诗</h2></div></div><div class="profile-grid" id="favorite-list"><p class="empty-state">还没有收藏作品。</p></div></section>
-            <section class="profile-panel" data-profile-panel="collections" hidden><div class="profile-panel__heading"><div><p class="eyebrow">整理</p><h2>作品合集</h2></div><button type="button" class="quiet-button" id="new-collection-button">新建合集</button></div><div class="collection-grid" id="collection-list"><p class="empty-state">还没有作品合集。</p></div></section>
+            <section class="profile-panel" data-profile-panel="favorites" hidden><div class="profile-panel__heading"><div><p class="eyebrow">收藏</p><h2>我的收藏</h2></div><button type="button" class="quiet-button" id="new-collection-button">＋ 新建合集</button></div><details class="favorite-section favorite-section--works" open><summary>收藏的作品</summary><div id="collection-list" class="favorite-collections"><p class="empty-state">正在加载合集……</p></div></details><details class="favorite-section favorite-section--posts" open><summary>收藏的帖子</summary><div class="thread-list" id="favorite-thread-list"><p class="empty-state">还没有收藏帖子。</p></div></details></section>
             <section class="profile-panel" data-profile-panel="archive" hidden><div class="profile-panel__heading"><div><p class="eyebrow">对话管理</p><h2>归档对话</h2></div></div><div class="folder-list" id="archive-list"><p class="empty-state">暂无归档对话。</p></div></section>
             <section class="profile-panel" data-profile-panel="following" hidden><div class="profile-panel__heading"><div><p class="eyebrow">诗友</p><h2>我的关注</h2></div><label class="forum-search"><span class="han-visually-hidden">搜索用户</span><input id="user-search-input" type="search" placeholder="搜索用户名或显示名称"></label></div><div id="user-search-results" class="follow-list"></div><div id="following-list" class="follow-list"><p class="empty-state">还没有关注诗友。</p></div></section>
           </div>
@@ -287,29 +284,32 @@
                     <option value="Tongyun">中华通韵</option>
                   </select>
                 </label>
-                <div id="tang-options" class="option-group">
-                  <label class="field"><span>字数</span><select id="tang-length"><option value="5">五言</option><option value="7" selected>七言</option></select></label>
-                  <label class="field"><span>篇式</span><select id="tang-form"><option value="jueju">绝句</option><option value="lvshi" selected>律诗</option></select></label>
-                </div>
-                <div id="songci-options" class="option-group" hidden>
-                  <label class="field"><span>词牌</span><select id="cipai"></select></label>
-                  <label class="field"><span>变体</span><select id="variant"></select></label>
-                </div>
-              </div>
-
-              <div class="rule-options">
-                <fieldset class="polyphonic-switch">
+                <fieldset class="polyphonic-switch control-polyphonic">
                   <legend>多音字</legend>
                   <label><input type="radio" name="polyphonic-mode" value="automatic" checked><span>自动</span></label>
                   <label><input type="radio" name="polyphonic-mode" value="strict"><span>严格</span></label>
                   <label><input type="radio" name="polyphonic-mode" value="permissive"><span>放行</span></label>
                 </fieldset>
-                <label id="smart-form-control" class="toggle-control" title="检查时自动选择综合分最高的五言、七言、绝句、律诗或排律">
-                  <input id="smart-form" type="checkbox" checked><span class="toggle-track" aria-hidden="true"></span><span>智能选式</span>
-                </label>
-                <label id="aojiu-control" class="toggle-control">
-                  <input id="allow-aojiu" type="checkbox"><span class="toggle-track" aria-hidden="true"></span><span>拗救</span>
-                </label>
+                <div class="rule-options control-rule-options">
+                  <label id="smart-form-control" class="toggle-control" title="检查时自动选择综合分最高的五言、七言、绝句、律诗或排律">
+                    <input id="smart-form" type="checkbox" checked><span class="toggle-track" aria-hidden="true"></span><span>智能选式</span>
+                  </label>
+                  <label id="aojiu-control" class="toggle-control">
+                    <input id="allow-aojiu" type="checkbox"><span class="toggle-track" aria-hidden="true"></span><span>拗救</span>
+                  </label>
+                </div>
+                <div id="tang-options" class="option-group">
+                  <label class="field"><span>字数</span><select id="tang-length"><option value="5">五言</option><option value="7" selected>七言</option></select></label>
+                  <label class="field"><span>篇式</span><select id="tang-form"><option value="jueju">绝句</option><option value="lvshi" selected>律诗</option></select></label>
+                </div>
+                <div id="songci-options" class="option-group" hidden>
+                  <label class="field"><span>篇幅</span><select id="cipai-length"><option value="all">全部</option><option value="short">小令</option><option value="medium">中调</option><option value="long">长调</option></select></label>
+                  <label class="field"><span>排序</span><select id="cipai-sort"><option value="name-asc">名称正序</option><option value="name-desc">名称逆序</option><option value="length-asc">字数升序</option><option value="length-desc">字数降序</option></select></label>
+                  <label class="field"><span>词牌搜索</span><input id="cipai-search" type="search" placeholder="输入词牌名" autocomplete="off"></label>
+                  <label class="field"><span>词牌</span><select id="cipai"></select></label>
+                  <label class="field"><span>变体</span><select id="variant"></select></label>
+                  <p id="cipai-filter-status" class="cipai-filter-status" aria-live="polite"></p>
+                </div>
               </div>
 
               <section id="meter-template" class="meter-template" hidden aria-live="polite">
@@ -361,6 +361,8 @@
         </div>
       </div>
     </section>
+
+    <div class="collection-modal" id="collection-modal" hidden><div class="collection-modal__backdrop" data-collection-close></div><section class="collection-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="collection-modal-title"><button type="button" class="collection-modal__close" data-collection-close aria-label="关闭">×</button><p class="eyebrow">收藏整理</p><h2 id="collection-modal-title">选择合集</h2><div id="collection-modal-list"></div><div id="collection-create-form" hidden><label class="field"><span>合集名称</span><input id="collection-name-input" maxlength="120" placeholder="请输入合集名称"></label><p class="form-status" id="collection-create-status"></p><button type="button" class="primary-button" id="collection-create-submit">确认新建</button></div><button type="button" class="primary-button" id="collection-modal-new">＋ 新建合集</button></section></div>
 
     <section class="app-view forum-thread-view" data-view="forum-thread" aria-labelledby="thread-page-title" hidden>
       <div class="forum-shell forum-thread-shell">
@@ -460,7 +462,7 @@
 
   <footer class="site-footer"><span>诗矩 · 前端框架预览</span><span>产品文案与业务流程将在后续迭代中完善</span></footer>
   <div id="site-status" class="site-status" role="status" aria-live="polite"></div>
-  <script type="module" src="./site.js?v=34"></script>
-  <script type="module" src="./app.js?v=7"></script>
+  <script type="module" src="./site.js?v=35"></script>
+  <script type="module" src="./app.js?v=9"></script>
 </body>
 </html>

@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 from .api_client import WorkerApiClient
-from .worker import GpuWorker
+from .worker import GpuWorker, WorkerCancelled
 
 
 LOGGER = logging.getLogger(__name__)
@@ -65,13 +65,20 @@ def build_worker() -> GpuWorker:
     quantization = os.getenv("SHIJU_QUANTIZATION", "8bit")
     rhyme_dir = str(Path(os.getenv("SHIJU_RHYME_DIR", "Rhyme")))
     meter_dir = str(Path(os.getenv("SHIJU_METER_DIR", "Songci_Meter")))
-    def process_runner(kind, payload, on_event=None):
+    def process_runner(kind, payload, on_event=None, should_cancel=None):
         context = multiprocessing.get_context("spawn")
         event_queue = context.Queue()
         process = context.Process(target=_process_entry, args=(event_queue, model_name, quantization, rhyme_dir, meter_dir, kind, payload))
         process.start()
         outcome = None
         while process.is_alive() or outcome is None:
+            if should_cancel and should_cancel():
+                process.terminate()
+                process.join(timeout=10)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=5)
+                raise WorkerCancelled("任务已由用户取消")
             try:
                 message = event_queue.get(timeout=0.25)
             except queue.Empty:

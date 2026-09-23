@@ -141,6 +141,35 @@ class JobRepository:
             raise JobNotFound(job_id)
         return self._record(row)
 
+    def cancel(self, job_id: str, *, user_id: str | None = None) -> JobRecord:
+        """Cancel queued work or request cooperative cancellation from its worker."""
+        now = self._clock()
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+            if row is None:
+                raise JobNotFound(job_id)
+            if user_id is not None and row["user_id"] != user_id:
+                raise JobNotFound(job_id)
+            if row["status"] == JobStatus.QUEUED.value:
+                connection.execute(
+                    "UPDATE jobs SET status=?, cancel_requested=1, updated_at=?, finished_at=? WHERE id=? AND status=?",
+                    (JobStatus.CANCELLED.value, now, now, job_id, JobStatus.QUEUED.value),
+                )
+            elif row["status"] == JobStatus.RUNNING.value:
+                if row["cancel_requested"]:
+                    raise ValueError("任务取消请求已经提交")
+                connection.execute(
+                    "UPDATE jobs SET cancel_requested=1, updated_at=? WHERE id=? AND status=?",
+                    (now, job_id, JobStatus.RUNNING.value),
+                )
+            else:
+                raise ValueError("任务已经结束，当前不能取消")
+            updated = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        event_type = "job.cancelled" if updated["status"] == JobStatus.CANCELLED.value else "job.cancel_requested"
+        EventRepository(self.database, clock=self._clock).append_job_event(job_id, event_type, {})
+        return self._record(updated)
+
     def assign_user(self, job_id: str, user_id: str) -> None:
         with self.database.connect() as connection:
             connection.execute("UPDATE jobs SET user_id = ? WHERE id = ? AND user_id IS NULL", (user_id, job_id))
@@ -213,7 +242,7 @@ class JobRepository:
             ).fetchone()
             return self._record(claimed)
 
-    def heartbeat(self, job_id: str, worker_id: str, *, lease_seconds: int = 300) -> None:
+    def heartbeat(self, job_id: str, worker_id: str, *, lease_seconds: int = 300) -> bool:
         now = self._clock()
         with self.database.connect() as connection:
             result = connection.execute(
@@ -225,6 +254,27 @@ class JobRepository:
             )
         if result.rowcount != 1:
             raise JobOwnershipError(job_id)
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT cancel_requested FROM jobs WHERE id=? AND worker_id=? AND status=?",
+                (job_id, worker_id, JobStatus.RUNNING.value),
+            ).fetchone()
+        return bool(row and row[0])
+
+    def acknowledge_cancel(self, job_id: str, worker_id: str) -> None:
+        now = self._clock()
+        with self.database.connect() as connection:
+            result = connection.execute(
+                """
+                UPDATE jobs SET status=?, worker_id=NULL, lease_expires_at=NULL,
+                    updated_at=?, finished_at=?
+                WHERE id=? AND worker_id=? AND status=? AND cancel_requested=1
+                """,
+                (JobStatus.CANCELLED.value, now, now, job_id, worker_id, JobStatus.RUNNING.value),
+            )
+        if result.rowcount != 1:
+            raise JobOwnershipError(job_id)
+        EventRepository(self.database, clock=self._clock).append_job_event(job_id, "job.cancelled", {})
 
     def complete(self, job_id: str, worker_id: str, result: Mapping[str, Any]) -> None:
         now = self._clock()
@@ -409,8 +459,18 @@ class JobRepository:
         connection.execute(
             """
             UPDATE jobs
+            SET status = ?, worker_id = NULL, lease_expires_at = NULL,
+                updated_at = ?, finished_at = ?
+            WHERE status = ? AND lease_expires_at < ? AND cancel_requested = 1
+            """,
+            (JobStatus.CANCELLED.value, now, now, JobStatus.RUNNING.value, now),
+        )
+        connection.execute(
+            """
+            UPDATE jobs
             SET status = ?, worker_id = NULL, lease_expires_at = NULL, updated_at = ?
             WHERE status = ? AND lease_expires_at < ? AND attempts < max_attempts
+                AND cancel_requested = 0
             """,
             (JobStatus.QUEUED.value, now, JobStatus.RUNNING.value, now),
         )
@@ -421,6 +481,7 @@ class JobRepository:
                 error_message = 'Worker lease expired after maximum attempts',
                 worker_id = NULL, lease_expires_at = NULL, updated_at = ?, finished_at = ?
             WHERE status = ? AND lease_expires_at < ? AND attempts >= max_attempts
+                AND cancel_requested = 0
             """,
             (JobStatus.FAILED.value, now, now, JobStatus.RUNNING.value, now),
         )

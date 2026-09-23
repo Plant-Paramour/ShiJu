@@ -16,6 +16,8 @@ class RhymeLookup(Protocol):
 
     def get_rhyme_part_by_tone(self, char: str, tone: str) -> List[str]: ...
 
+    def iter_rhyme_entries(self) -> Iterable[Tuple[str, str, str]]: ...
+
 
 class RhymeLexicon:
     """只负责韵书加载与查询，不感知格律模板。"""
@@ -89,6 +91,7 @@ class MeterTemplate:
     variant_name: str
     rhyme_type: str
     stanzas: Tuple[MeterStanza, ...]
+    repetition_groups: Tuple[Mapping[str, object], ...] = ()
 
     @property
     def lines(self) -> Tuple[MeterLine, ...]:
@@ -148,6 +151,8 @@ class MeterTemplateRepository:
             raise ValueError(f"词牌 {name} 的 number_of_stanzas 无效")
 
         stanzas = []
+        rhyme_endpoints: set[tuple[int, int, int]] = set()
+        line_lengths: dict[tuple[int, int], int] = {}
         for stanza_index in range(stanza_count):
             raw_stanza = variant.get(f"stanza{stanza_index + 1}")
             if not isinstance(raw_stanza, dict):
@@ -155,7 +160,7 @@ class MeterTemplateRepository:
             patterns = raw_stanza.get("lines")
             if not isinstance(patterns, list) or not patterns:
                 raise ValueError(f"词牌 {name} 第 {stanza_index + 1} 阕缺少 lines")
-            if raw_stanza.get("num_lines") != len(patterns):
+            if raw_stanza.get("num_lines") is not None and raw_stanza.get("num_lines") != len(patterns):
                 raise ValueError(f"词牌 {name} 第 {stanza_index + 1} 阕 num_lines 与 lines 不一致")
             expected_lengths = raw_stanza.get("chars_per_line")
             if expected_lengths is not None and (
@@ -203,6 +208,9 @@ class MeterTemplateRepository:
                         rhyme_group=rhyme_groups.get(line_in_stanza),
                     )
                 )
+                line_lengths[(stanza_index + 1, line_in_stanza + 1)] = len(tones)
+                if line_in_stanza in rhyme_groups:
+                    rhyme_endpoints.add((stanza_index + 1, line_in_stanza + 1, len(tones)))
             expected_total = raw_stanza.get("num_chars")
             actual_total = sum(line.layout.length for line in parsed_lines)
             if expected_total is not None and expected_total != actual_total:
@@ -211,11 +219,42 @@ class MeterTemplateRepository:
                 )
             stanzas.append(MeterStanza(index=stanza_index, lines=tuple(parsed_lines)))
 
+        repetition_groups = []
+        for group in variant.get("repetition_groups") or ():
+            if not isinstance(group, dict):
+                continue
+            positions = group.get("positions") or []
+            includes_rhyme = False
+            covers_complete_sentence = True
+            for position in positions:
+                if not isinstance(position, dict):
+                    continue
+                start = position.get("start") or []
+                end = position.get("end") or []
+                if len(start) < 2 or len(end) < 2:
+                    continue
+                stanza_no = int(position.get("stanza", 0))
+                for line_no in range(int(start[0]), int(end[0]) + 1):
+                    line_index = line_no - 1
+                    line_length = next((length for s, l, length in rhyme_endpoints if s == stanza_no and l == line_no), None)
+                    if line_length is None:
+                        continue
+                    first_char = int(start[1]) if line_no == start[0] else 1
+                    last_char = int(end[1]) if line_no == end[0] else line_length
+                    if first_char <= line_length <= last_char and (stanza_no, line_no, line_length) in rhyme_endpoints:
+                        includes_rhyme = True
+                if int(start[1]) != 1 or int(end[1]) != line_lengths.get((stanza_no, int(end[0])), -1):
+                    covers_complete_sentence = False
+            enriched = dict(group)
+            enriched["kind"] = "叠韵" if includes_rhyme else ("叠句" if covers_complete_sentence else "叠字")
+            repetition_groups.append(enriched)
+
         return MeterTemplate(
             name=name,
             variant_name=str(variant.get("name") or name),
             rhyme_type=str(variant.get("rhyme_type") or "平韵").strip(),
             stanzas=tuple(stanzas),
+            repetition_groups=tuple(repetition_groups),
         )
 
     @staticmethod
@@ -234,8 +273,22 @@ class MeterTemplateRepository:
                 breaks.add(len(tones))
             elif char == "、":
                 caesuras.add(len(tones))
+            elif "\u4e00" <= char <= "\u9fff":
+                # 部分词谱以示例字占位；占位字不限定平仄，但仍计入字数。
+                tones.append(frozenset({"平", "仄"}))
             else:
                 raise ValueError(f"未知格律符号: {char!r}")
         if not tones:
             raise ValueError("格律行不能为空")
+        # 新版词牌数据暂未写入句读斜杠。保留状态机所需的节奏边界，
+        # 待数据补上显式 / 或 、 后，上面的解析结果会优先覆盖这些默认值。
+        if not breaks:
+            defaults = {
+                4: (2,),
+                5: (2,),
+                6: (3,),
+                7: (2, 4),
+                8: (3, 5),
+            }
+            breaks.update(defaults.get(len(tones), ()))
         return tones, breaks, caesuras

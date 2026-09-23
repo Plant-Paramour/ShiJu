@@ -61,6 +61,8 @@ class GeneratePoemRequest:
     strict_polyphonic: bool = True
     candidate_count: int = 1
     task_options: dict[str, Any] = field(default_factory=dict)
+    rhyme_mode: str = "auto"
+    rhyme_parts: dict[str, str] = field(default_factory=dict)
     sampling: SamplingOptions = field(default_factory=SamplingOptions)
 
     def __post_init__(self) -> None:
@@ -69,6 +71,12 @@ class GeneratePoemRequest:
                 raise ContractError(f"{name} 不能为空")
         if not 1 <= self.candidate_count <= 5:
             raise ContractError("candidate_count 必须在 1 到 5 之间")
+        if self.rhyme_mode not in {"auto", "fixed", "random"}:
+            raise ContractError("rhyme_mode 必须是 auto、fixed 或 random")
+        if self.rhyme_mode == "fixed" and not self.rhyme_parts:
+            raise ContractError("fixed 模式至少要指定一个 rhyme_parts 韵组")
+        if any(not str(key).strip() or not str(value).strip() for key, value in self.rhyme_parts.items()):
+            raise ContractError("rhyme_parts 的韵组和韵部不能为空")
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "GeneratePoemRequest":
@@ -95,6 +103,8 @@ class RewritePoemRequest:
     strict_context: bool = True
     candidate_count: int = 1
     task_options: dict[str, Any] = field(default_factory=dict)
+    rhyme_mode: str = "auto"
+    rhyme_parts: dict[str, str] = field(default_factory=dict)
     sampling: SamplingOptions = field(
         default_factory=lambda: SamplingOptions(max_new_tokens=512)
     )
@@ -113,6 +123,10 @@ class RewritePoemRequest:
             raise ContractError("target_line_numbers 使用从 1 开始的正整数")
         if not 1 <= self.candidate_count <= 5:
             raise ContractError("candidate_count 必须在 1 到 5 之间")
+        if self.rhyme_mode not in {"auto", "fixed", "random"}:
+            raise ContractError("rhyme_mode 必须是 auto、fixed 或 random")
+        if self.rhyme_mode == "fixed" and not self.rhyme_parts:
+            raise ContractError("fixed 模式至少要指定一个 rhyme_parts 韵组")
         if not self.strict_context:
             raise ContractError("MVP 的指定句重写只支持 strict_context=true")
 

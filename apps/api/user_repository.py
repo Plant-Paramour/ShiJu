@@ -10,6 +10,7 @@ from .database import Database
 
 
 class UserRepository:
+    ROLE_LEVELS = {"user": 0, "admin": 10, "developer": 20}
     def __init__(self, database: Database):
         self.database = database
 
@@ -33,6 +34,12 @@ class UserRepository:
                 )
             else:
                 connection.execute("UPDATE users SET role='admin' WHERE username='admin'")
+            developer_username = __import__("os").getenv("SHIJU_DEVELOPER_USERNAME", "").strip()
+            if developer_username:
+                connection.execute(
+                    "UPDATE users SET role='developer' WHERE username=?",
+                    (developer_username,),
+                )
 
     @staticmethod
     def _user(row) -> dict[str, Any]:
@@ -65,6 +72,8 @@ class UserRepository:
         return {"items": [self._user(row) for row in rows], "page": page, "limit": limit, "total": total, "pages": (total + limit - 1) // limit}
 
     def create_user(self, username: str, password: str, display_name: str | None = None, role: str = "user") -> dict[str, Any]:
+        if role not in self.ROLE_LEVELS:
+            raise ValueError("invalid role")
         user_id = str(uuid.uuid4())
         with self.database.connect() as connection:
             connection.execute("INSERT INTO users(id,username,password_hash,display_name,role) VALUES (?,?,?,?,?)", (user_id, username.strip(), hash_password(password), (display_name or username).strip(), role))
@@ -97,6 +106,8 @@ class UserRepository:
         return True
 
     def set_role(self, user_id: str, role: str) -> bool:
+        if role not in self.ROLE_LEVELS:
+            raise ValueError("invalid role")
         with self.database.connect() as connection:
             result = connection.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
         return result.rowcount == 1

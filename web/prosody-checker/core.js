@@ -340,6 +340,10 @@ function stanzaKeys(variant) {
     .sort((a, b) => Number(a.slice(6)) - Number(b.slice(6)));
 }
 
+function normalizeMeterPattern(pattern) {
+  return [...pattern].map((char) => "平仄中/、".includes(char) ? char : (/[\u4e00-\u9fff]/u.test(char) ? "中" : char)).join("");
+}
+
 export function flattenMeter(variant) {
   const clauses = [];
   const rhymeGroups = new Map();
@@ -348,8 +352,9 @@ export function flattenMeter(variant) {
     const stanza = variant[stanzaKey];
     const lineToClauses = [];
     for (const rawPattern of stanza.lines ?? []) {
+      const normalizedPattern = normalizeMeterPattern(rawPattern);
       const clauseIndices = [];
-      for (const subPattern of rawPattern.split("、")) {
+      for (const subPattern of normalizedPattern.split("、")) {
         const pattern = subPattern.replace(/[\/\s]/g, "");
         if (!pattern) continue;
         clauseIndices.push(clauses.length);
@@ -382,7 +387,7 @@ export function flattenMeter(variant) {
 export function formatMeterTemplate(variant) {
   return stanzaKeys(variant).map((stanzaKey) => ({
     name: stanzaKey,
-    lines: (variant[stanzaKey].lines ?? []).map((line) => line.replaceAll("/", "")),
+    lines: (variant[stanzaKey].lines ?? []).map((line) => normalizeMeterPattern(line).replaceAll("/", "")),
   }));
 }
 

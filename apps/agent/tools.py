@@ -333,6 +333,13 @@ class AgentToolbox:
             request.num_lines,
             request.task_options,
         )
+        self._validate_rhyme_selection(
+            request.rhyme_dict_name,
+            request.rhyme_mode,
+            request.rhyme_parts,
+            request.meter_type,
+            request.form_name,
+        )
         return self._store_proposal("generate", request.to_dict(), context)
 
     def _prepare_rewrite(self, arguments, context: ToolContext) -> dict:
@@ -345,6 +352,13 @@ class AgentToolbox:
             request.form_name,
             request.num_lines,
             request.task_options,
+        )
+        self._validate_rhyme_selection(
+            request.rhyme_dict_name,
+            request.rhyme_mode,
+            request.rhyme_parts,
+            request.meter_type,
+            request.form_name,
         )
         poem = parse_poem(request.original_text)
         if request.target_line_numbers[-1] > len(poem.lines):
@@ -367,6 +381,8 @@ class AgentToolbox:
             "form_name",
             "theme",
             "rhyme_dict_name",
+            "rhyme_mode",
+            "rhyme_parts",
             "requirement",
             "num_lines",
             "target_line_numbers",
@@ -435,6 +451,48 @@ class AgentToolbox:
         if book not in self._lexicons:
             self._lexicons[book] = RhymeLexicon(self._root / "Rhyme" / f"{book}.json")
         return self._lexicons[book]
+
+    def _validate_rhyme_selection(
+        self,
+        book: str,
+        mode: str,
+        parts: Mapping[str, str],
+        meter_type: str,
+        form_name: str,
+    ) -> None:
+        if mode not in {"auto", "fixed", "random"}:
+            raise ValueError("rhyme_mode 必须是 auto、fixed 或 random")
+        entries = list(self._lexicon(book).iter_rhyme_entries())
+        available = {part for _, part, _ in entries}
+        expected_tone = None
+        valid_groups: set[str] | None = None
+        if meter_type == "唐诗":
+            expected_tone = "仄" if "仄韵" in form_name else "平"
+            valid_groups = {"1"}
+        elif meter_type == "排律":
+            expected_tone = "平"
+            valid_groups = {"1"}
+        elif meter_type == "宋词":
+            template = MeterTemplateRepository(self._root / "Songci_Meter").get(form_name)
+            expected_tone = "仄" if "仄韵" in template.rhyme_type else "平"
+            valid_groups = {
+                str(line.rhyme_group)
+                for line in template.lines
+                if line.rhyme_group is not None
+            }
+        elif meter_type == "汉俳":
+            valid_groups = {"1"}
+        for group, part in parts.items():
+            group = str(group)
+            if str(part).lower() != "random" and part not in available:
+                raise ValueError(f"{book} 中未找到韵组 {group} 指定的韵部 {part}")
+            if valid_groups is not None and group not in valid_groups:
+                raise ValueError(f"{form_name} 不存在韵组 {group}")
+            if expected_tone and str(part).lower() != "random":
+                if not any(item_part == part and tone == expected_tone for _, item_part, tone in entries):
+                    raise ValueError(
+                        f"{form_name} 是{expected_tone}韵，韵部 {part} 没有可用的{expected_tone}声韵脚"
+                    )
 
     def _validate_form(
         self,
@@ -509,6 +567,8 @@ def _generation_schema() -> dict[str, Any]:
             "form_name": {"type": "string"},
             "theme": {"type": "string", "description": "简洁主题"},
             "rhyme_dict_name": {"type": "string", "enum": list(RHYME_BOOKS)},
+            "rhyme_mode": {"type": "string", "enum": ["auto", "fixed", "random"], "description": "韵部策略：auto 自动锁韵，fixed 使用 rhyme_parts，random 随机选韵"},
+            "rhyme_parts": {"type": "object", "additionalProperties": {"type": "string"}, "description": "按韵组编号指定韵部，如 {\"1\":\"一东\"}；值为 random 可对该组随机选韵"},
             "requirement": {
                 "type": "string",
                 "description": "细化后的创作提示，包含意象、情绪、章法和特殊要求",
@@ -558,6 +618,8 @@ def _generation_payload(arguments: Mapping[str, Any]) -> dict[str, Any]:
         "form_name": arguments.get("form_name"),
         "theme": arguments.get("theme"),
         "rhyme_dict_name": arguments.get("rhyme_dict_name", "Xinyun"),
+        "rhyme_mode": arguments.get("rhyme_mode", "auto"),
+        "rhyme_parts": dict(arguments.get("rhyme_parts") or {}),
         "requirement": arguments.get("requirement", ""),
         "num_lines": arguments.get("num_lines"),
         "strict_polyphonic": arguments.get("strict_polyphonic", True),

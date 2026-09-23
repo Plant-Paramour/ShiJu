@@ -21,7 +21,7 @@ def test_local_database_migrations_and_readiness(tmp_path):
     assert ready.json()["database"] == "ok"
     with client.app.state.jobs.database.connect() as connection:
         migrations = connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-        assert migrations == 11
+        assert migrations == 13
         assert connection.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
 
 
@@ -49,4 +49,3 @@ def test_production_settings_require_database_and_secret(monkeypatch):
     monkeypatch.delenv("SHIJU_AUTH_SECRET", raising=False)
     with pytest.raises(ValueError, match="SHIJU_AUTH_SECRET"):
         ApiSettings.from_env()
-

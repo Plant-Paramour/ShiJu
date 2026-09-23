@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import product
+import random
 from typing import Mapping, Protocol, Sequence
 
 from .data import MeterTemplate, RhymeLookup
@@ -18,7 +19,7 @@ class ConstraintProfile(Protocol):
     @property
     def layout(self) -> GenerationLayout: ...
 
-    def create_session(self) -> "BaseConstraintSession": ...
+    def create_session(self, *, rhyme_mode: str = "auto", rhyme_parts: Mapping[str, str] | None = None) -> "BaseConstraintSession": ...
 
 
 class BaseConstraintSession:
@@ -99,16 +100,30 @@ class TemplateConstraintProfile:
     def layout(self) -> GenerationLayout:
         return self.template.layout
 
-    def create_session(self) -> "TemplateConstraintSession":
-        return TemplateConstraintSession(self.template, self.lexicon)
+    def create_session(self, *, rhyme_mode: str = "auto", rhyme_parts: Mapping[str, str] | None = None) -> "TemplateConstraintSession":
+        return TemplateConstraintSession(self.template, self.lexicon, rhyme_mode=rhyme_mode, rhyme_parts=rhyme_parts)
 
 
 class TemplateConstraintSession(BaseConstraintSession):
-    def __init__(self, template: MeterTemplate, lexicon: RhymeLookup):
+    def __init__(self, template: MeterTemplate, lexicon: RhymeLookup, *, rhyme_mode: str = "auto", rhyme_parts: Mapping[str, str] | None = None):
         self._template = template
         self._lexicon = lexicon
         self._lines = template.lines
         self._locked_rhyme_parts: dict[int, str] = {}
+        requested = {str(key): str(value) for key, value in (rhyme_parts or {}).items()}
+        groups = sorted({line.rhyme_group for line in self._lines if line.rhyme_group is not None})
+        for group in groups:
+            value = requested.get(str(group))
+            if value and value.lower() != "random":
+                tone = "平" if "平" in self._template.rhyme_type else "仄"
+                if not any(part == value and item_tone == tone for _, part, item_tone in self._lexicon.iter_rhyme_entries()):
+                    raise ValueError(f"韵部 {value} 没有可用于{tone}韵的字")
+                self._locked_rhyme_parts[group] = value
+            elif rhyme_mode == "random" or value:
+                tone = "平" if "平" in self._template.rhyme_type else "仄"
+                parts = sorted({part for _, part, item_tone in self._lexicon.iter_rhyme_entries() if item_tone == tone})
+                if parts:
+                    self._locked_rhyme_parts[group] = random.choice(parts)
 
     @property
     def locked_rhyme_parts(self) -> dict[int, str]:
@@ -272,7 +287,7 @@ class HanpaiConstraintProfile:
     def rhyme_lines(self) -> frozenset[int]:
         return self._rhyme_lines
 
-    def create_session(self) -> "HanpaiConstraintSession":
+    def create_session(self, *, rhyme_mode: str = "auto", rhyme_parts: Mapping[str, str] | None = None) -> "HanpaiConstraintSession":
         return HanpaiConstraintSession(
             line_lengths=self.line_lengths,
             lexicon=self.lexicon,
@@ -280,6 +295,8 @@ class HanpaiConstraintProfile:
             forbid_isolated_level=self.forbid_isolated_level,
             allow_aojiu=self.allow_aojiu,
             forbid_three_same_ending=self.forbid_three_same_ending,
+            rhyme_mode=rhyme_mode,
+            rhyme_parts=rhyme_parts,
         )
 
 
@@ -292,6 +309,8 @@ class HanpaiConstraintSession(BaseConstraintSession):
         forbid_isolated_level: bool,
         allow_aojiu: bool,
         forbid_three_same_ending: bool,
+        rhyme_mode: str = "auto",
+        rhyme_parts: Mapping[str, str] | None = None,
     ):
         self._line_lengths = line_lengths
         self._lexicon = lexicon
@@ -300,6 +319,19 @@ class HanpaiConstraintSession(BaseConstraintSession):
         self._allow_aojiu = allow_aojiu
         self._forbid_three_same_ending = forbid_three_same_ending
         self._locked_rhyme_parts: dict[str, set[str]] | None = None
+        requested = {str(key): str(value) for key, value in (rhyme_parts or {}).items()}
+        requested_value = requested.get("1") or requested.get("0")
+        if requested_value:
+            if requested_value.lower() == "random":
+                candidates = sorted({part for _, part, _ in self._lexicon.iter_rhyme_entries()})
+                requested_value = random.choice(candidates) if candidates else None
+            if requested_value:
+                self._locked_rhyme_parts = {"平": {requested_value}, "仄": {requested_value}}
+        elif rhyme_mode == "random":
+            candidates = sorted({part for _, part, _ in self._lexicon.iter_rhyme_entries()})
+            if candidates:
+                selected = random.choice(candidates)
+                self._locked_rhyme_parts = {"平": {selected}, "仄": {selected}}
 
     @property
     def locked_rhyme_parts(self) -> dict[str, frozenset[str]]:
@@ -461,7 +493,7 @@ class RelationalConstraintProfile:
     def layout(self) -> GenerationLayout:
         return self._layout
 
-    def create_session(self) -> "RelationalConstraintSession":
+    def create_session(self, *, rhyme_mode: str = "auto", rhyme_parts: Mapping[str, str] | None = None) -> "RelationalConstraintSession":
         return RelationalConstraintSession(
             line_length=self.line_length,
             num_lines=self.num_lines,
@@ -469,6 +501,8 @@ class RelationalConstraintProfile:
             lexicon=self.lexicon,
             allow_aojiu=self.allow_aojiu,
             strict_polyphonic=self.strict_polyphonic,
+            rhyme_mode=rhyme_mode,
+            rhyme_parts=rhyme_parts,
         )
 
 
@@ -481,6 +515,8 @@ class RelationalConstraintSession(BaseConstraintSession):
         lexicon: RhymeLookup,
         allow_aojiu: bool = False,
         strict_polyphonic: bool = True,
+        rhyme_mode: str = "auto",
+        rhyme_parts: Mapping[str, str] | None = None,
     ):
         self._line_length = line_length
         self._num_lines = num_lines
@@ -493,6 +529,19 @@ class RelationalConstraintSession(BaseConstraintSession):
         self._line0_rhymes = False
         self._active_line = 0
         self._current_base_tone = 2
+        requested = {str(key): str(value) for key, value in (rhyme_parts or {}).items()}
+        selected = requested.get("1") or requested.get("0")
+        if selected and selected.lower() == "random":
+            selected = None
+        if selected is None and rhyme_mode == "random":
+            expected = "平" if "平" in self._rhyme_type else "仄"
+            candidates = sorted({part for _, part, tone in self._lexicon.iter_rhyme_entries() if tone == expected})
+            selected = random.choice(candidates) if candidates else None
+        if selected:
+            expected = "平" if "平" in self._rhyme_type else "仄"
+            if not any(part == selected and tone == expected for _, part, tone in self._lexicon.iter_rhyme_entries()):
+                raise ValueError(f"韵部 {selected} 没有可用于{expected}韵的字")
+            self._locked_rhyme_parts = {selected}
 
     def _ensure_line(self, line_index: int) -> None:
         if line_index == self._active_line:

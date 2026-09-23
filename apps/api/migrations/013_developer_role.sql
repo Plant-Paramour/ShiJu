@@ -1,0 +1,3 @@
+-- developer is the highest application role; existing users keep their roles.
+-- Role assignment is enforced by the API because SQLite/PostgreSQL migration
+-- constraints differ and role changes require actor-aware authorization.

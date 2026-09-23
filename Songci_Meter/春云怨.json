@@ -1,0 +1,60 @@
+{
+  "name": "春云怨",
+  "aliases": [],
+  "description": "调见冯艾子《云月词》，自注“黄钟商”。",
+  "default_variant": "冯艾子",
+  "default_variant_source_id": 1949,
+  "variants": [
+    {
+      "name": "冯艾子",
+      "source_id": 1949,
+      "length_category": "long",
+      "variants_description": "此冯艾子自度曲，平仄当遵之。",
+      "rhyme_type": "仄韵",
+      "number_of_stanzas": 2,
+      "stanza1": {
+        "rhyme_1_positions": [
+          1,
+          3,
+          5,
+          8,
+          11
+        ],
+        "lines": [
+          "平平仄仄",
+          "仄仄平平仄",
+          "平平平仄",
+          "仄仄仄平平仄",
+          "仄仄仄平平仄仄",
+          "仄仄平平",
+          "平平平仄",
+          "仄仄平平仄平仄",
+          "平仄平平",
+          "平平平仄",
+          "仄仄仄平仄"
+        ]
+      },
+      "stanza2": {
+        "rhyme_1_positions": [
+          1,
+          3,
+          4,
+          7,
+          10
+        ],
+        "lines": [
+          "平平仄仄平平仄",
+          "仄平平仄仄",
+          "平平平仄",
+          "平仄平平仄平仄",
+          "平仄平平",
+          "仄仄平平",
+          "仄平平仄",
+          "仄仄平平",
+          "仄平平仄",
+          "仄仄仄平仄仄"
+        ]
+      }
+    }
+  ]
+}

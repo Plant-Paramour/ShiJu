@@ -30,7 +30,7 @@ class ForumRepository:
     def _permission(self, db, user_id: str | None, section_id: str) -> str:
         if not user_id: return "read"
         user = db.execute("SELECT role FROM users WHERE id=?", (user_id,)).fetchone()
-        if user and user["role"] == "admin": return "moderate"
+        if user and user["role"] in {"admin", "developer"}: return "moderate"
         if db.execute("SELECT 1 FROM forum_section_moderators WHERE section_id=? AND user_id=?", (section_id, user_id)).fetchone(): return "moderate"
         row = db.execute("SELECT permission FROM forum_permissions WHERE user_id=? AND section_id=?", (user_id, section_id)).fetchone()
         return row["permission"] if row else "write"

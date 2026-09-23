@@ -1,0 +1,51 @@
+{
+  "name": "赞成功",
+  "aliases": [],
+  "description": "调见《花间集》。",
+  "default_variant": "毛文锡",
+  "default_variant_source_id": 904,
+  "variants": [
+    {
+      "name": "毛文锡",
+      "source_id": 904,
+      "length_category": "medium",
+      "variants_description": "此调无唐宋词别首可校。",
+      "rhyme_type": "平韵",
+      "number_of_stanzas": 2,
+      "stanza1": {
+        "rhyme_1_positions": [
+          2,
+          3,
+          5,
+          7
+        ],
+        "lines": [
+          "仄平仄仄",
+          "仄仄平平",
+          "平平平仄仄平平",
+          "仄平平仄",
+          "平仄平平",
+          "平平仄仄",
+          "仄仄平平"
+        ]
+      },
+      "stanza2": {
+        "rhyme_1_positions": [
+          2,
+          3,
+          5,
+          7
+        ],
+        "lines": [
+          "仄仄平仄",
+          "平仄平平",
+          "仄平平仄仄平平",
+          "仄平平仄",
+          "仄仄平平",
+          "仄平仄仄",
+          "仄仄平平"
+        ]
+      }
+    }
+  ]
+}

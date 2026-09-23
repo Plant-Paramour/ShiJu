@@ -1,0 +1,65 @@
+{
+  "name": "翠楼吟",
+  "aliases": [],
+  "description": "姜夔自度夹钟商曲。",
+  "default_variant": "姜夔",
+  "default_variant_source_id": 1787,
+  "variants": [
+    {
+      "name": "姜夔",
+      "source_id": 1787,
+      "length_category": "long",
+      "variants_description": "此调衹此一词，无他作可校。",
+      "rhyme_type": "仄韵",
+      "number_of_stanzas": 2,
+      "stanza1": {
+        "rhyme_1_positions": [
+          3,
+          5,
+          6,
+          8,
+          9,
+          11
+        ],
+        "lines": [
+          "仄仄平平",
+          "平平仄仄",
+          "平平仄平平仄",
+          "平平平仄仄",
+          "仄平仄平平平仄",
+          "平平平仄",
+          "仄仄仄平平",
+          "平平平仄",
+          "平平仄",
+          "仄平平仄",
+          "仄平平仄"
+        ]
+      },
+      "stanza2": {
+        "rhyme_1_positions": [
+          1,
+          4,
+          6,
+          7,
+          9,
+          10,
+          12
+        ],
+        "lines": [
+          "仄仄",
+          "平仄平平",
+          "仄仄平平仄",
+          "仄平平仄",
+          "仄平平仄仄",
+          "仄平仄平平平仄",
+          "平平平仄",
+          "仄仄仄平平",
+          "平平平仄",
+          "平平仄",
+          "仄平平仄",
+          "仄平平仄"
+        ]
+      }
+    }
+  ]
+}

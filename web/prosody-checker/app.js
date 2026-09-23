@@ -4,20 +4,14 @@ import {
   evaluateSongci,
   evaluateTang,
   formatMeterTemplate,
-} from "./core.js?v=7";
+} from "./core.js?v=8";
 import {
   evaluateBestTangAcrossBooks,
   getLexicon,
 } from "./prosody-evaluation.js?v=1";
 
-const METER_FILES = [
-  "浣溪沙.json",
-  "南乡子.json",
-  "水调歌头.json",
-  "桂枝香.json",
-  "渔家傲.json",
-  "谢池春.json",
-];
+let METER_FILES = [];
+let meterCatalog = [];
 
 const elements = {
   workspace: document.querySelector("#workspace"),
@@ -26,6 +20,10 @@ const elements = {
   rhymeBook: document.querySelector("#rhyme-book"),
   tangOptions: document.querySelector("#tang-options"),
   songciOptions: document.querySelector("#songci-options"),
+  cipaiLength: document.querySelector("#cipai-length"),
+  cipaiSearch: document.querySelector("#cipai-search"),
+  cipaiSort: document.querySelector("#cipai-sort"),
+  cipaiFilterStatus: document.querySelector("#cipai-filter-status"),
   tangLength: document.querySelector("#tang-length"),
   tangForm: document.querySelector("#tang-form"),
   cipai: document.querySelector("#cipai"),
@@ -80,22 +78,58 @@ function evaluationOptions() {
   return {
     polyphonicMode,
     strictPolyphonic: polyphonicMode === "strict",
-    allowAoJiu: elements.allowAoJiu.checked,
+    allowAoJiu: selectedType() === "haiku" ? false : elements.allowAoJiu.checked,
   };
 }
 
 async function loadMeterCatalog() {
-  const meters = await Promise.all(METER_FILES.map((filename) => getMeter(filename)));
-  elements.cipai.replaceChildren();
-  meters.forEach((meter, index) => {
-    const option = new Option(meter.name, METER_FILES[index]);
-    elements.cipai.add(option);
-  });
+  const index = await fetchJson(assetUrl("Songci_Meter", "index.json"));
+  meterCatalog = index.map((meter) => ({
+    filename: meter.file,
+    name: meter.name,
+    searchText: [meter.name, ...(meter.aliases ?? [])].join(" ").toLocaleLowerCase(),
+    lengthCategory: meter.length_category,
+    length: meter.char_count,
+  }));
+  METER_FILES = meterCatalog.map((meter) => meter.filename);
+  renderMeterOptions();
   await updateVariants();
 }
 
+function renderMeterOptions() {
+  const query = elements.cipaiSearch.value.trim().toLocaleLowerCase();
+  const category = elements.cipaiLength.value;
+  const sort = elements.cipaiSort.value;
+  const current = elements.cipai.value;
+  const filtered = meterCatalog.filter((meter) =>
+    (category === "all" || meter.lengthCategory === category)
+    && (!query || meter.searchText.includes(query)));
+  filtered.sort((left, right) => {
+    if (sort === "name-asc" || sort === "name-desc") {
+      const result = left.name.localeCompare(right.name, "zh-Hans");
+      return sort === "name-asc" ? result : -result;
+    }
+    const result = left.length - right.length || left.name.localeCompare(right.name, "zh-Hans");
+    return sort === "length-asc" ? result : -result;
+  });
+  elements.cipai.replaceChildren();
+  filtered.forEach((meter) => elements.cipai.add(new Option(`${meter.name}　${meter.length}字`, meter.filename)));
+  elements.cipaiFilterStatus.textContent = filtered.length
+    ? `共 ${filtered.length} 个词牌`
+    : "没有符合条件的词牌";
+  if (filtered.some((meter) => meter.filename === current)) elements.cipai.value = current;
+  else if (filtered.length) elements.cipai.selectedIndex = 0;
+}
+
 async function updateVariants() {
-  const meter = await getMeter(elements.cipai.value);
+  const selectedFile = elements.cipai.value;
+  if (!selectedFile) {
+    elements.variant.replaceChildren();
+    elements.templateContent.replaceChildren();
+    return;
+  }
+  const meter = await getMeter(selectedFile);
+  if (elements.cipai.value !== selectedFile) return;
   elements.variant.replaceChildren();
   for (const variant of meter.variants ?? []) {
     elements.variant.add(new Option(variant.name, variant.name));
@@ -114,6 +148,7 @@ async function renderTemplate() {
   if (selectedType() !== "songci") return;
   const variant = await currentVariant();
   elements.templateContent.replaceChildren();
+  if (!variant) return;
   for (const stanza of formatMeterTemplate(variant)) {
     const stanzaElement = document.createElement("div");
     stanzaElement.className = "template-stanza";
@@ -132,10 +167,14 @@ function updateTypeView() {
   elements.tangOptions.hidden = type !== "tang";
   elements.songciOptions.hidden = type !== "songci";
   elements.meterTemplate.hidden = type !== "songci";
-  elements.allowAoJiu.disabled = type === "songci";
-  elements.aoJiuControl.classList.toggle("disabled", type === "songci");
+  const aoJiuDisabled = type === "songci" || type === "haiku";
+  elements.allowAoJiu.disabled = aoJiuDisabled;
+  elements.allowAoJiu.checked = aoJiuDisabled ? false : true;
+  elements.aoJiuControl.hidden = aoJiuDisabled;
+  elements.aoJiuControl.classList.toggle("disabled", aoJiuDisabled);
   const canSmartSelect = type === "tang" || type === "pailv";
   elements.smartForm.disabled = !canSmartSelect;
+  elements.smartFormControl.hidden = !canSmartSelect;
   elements.smartFormControl.classList.toggle("disabled", !canSmartSelect);
   elements.status.textContent = "";
   if (type === "songci") renderTemplate();
@@ -152,7 +191,7 @@ function appendCharacterRow(container, characters, property) {
     if (item.roles?.includes("rescue")) span.classList.add("rescue");
     if (item.error) span.classList.add("error");
     if (property === "tone" && item.tone.includes("/")) span.classList.add("multi-label");
-    span.textContent = property === "char" ? item.char : item.tone;
+    span.textContent = property === "char" ? item.char : (item.polyphonic ? "多" : item.tone);
     const hints = [];
     if (item.roles?.includes("ao")) hints.push("拗字");
     if (item.roles?.includes("rescue")) hints.push("救字");
@@ -208,7 +247,7 @@ function renderDetectionSummary(result) {
     appendSummaryGroup(
       elements.detectionSummary,
       "多音字判定",
-      polyphonicDecisions.map((item) => item.message),
+      polyphonicDecisions.map((item) => String(item.message || "").replaceAll("平/仄", "多")),
       "未发现需要单独判断的多音字。",
       "polyphonic-summary",
     );
@@ -386,6 +425,9 @@ async function runCheck(event) {
 
 elements.typeInputs.forEach((input) => input.addEventListener("change", updateTypeView));
 elements.cipai.addEventListener("change", updateVariants);
+elements.cipaiLength.addEventListener("change", async () => { renderMeterOptions(); await updateVariants(); });
+elements.cipaiSearch.addEventListener("input", async () => { renderMeterOptions(); await updateVariants(); });
+elements.cipaiSort.addEventListener("change", async () => { renderMeterOptions(); await updateVariants(); });
 elements.variant.addEventListener("change", renderTemplate);
 elements.form.addEventListener("submit", runCheck);
 

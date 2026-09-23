@@ -112,6 +112,22 @@ def get_poetry_job(
         raise HTTPException(status_code=404, detail="job not found") from exc
 
 
+@router.delete("/{job_id}")
+def cancel_poetry_job(
+    job_id: str,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    user_id = _authorize(request, authorization)
+    try:
+        job = request.app.state.jobs.cancel(job_id, user_id=user_id)
+    except JobNotFound as exc:
+        raise HTTPException(status_code=404, detail="job not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _job_response(request, job)
+
+
 @router.get("/{job_id}/state")
 def get_poetry_job_state(job_id: str, request: Request, authorization: str | None = Header(default=None)):
     user_id = _authorize(request, authorization)
@@ -171,7 +187,7 @@ def poetry_job_events(job_id: str, request: Request, authorization: str | None =
                 for event in batch:
                     cursor = event["seq"]
                     yield f"id: {cursor}\nevent: {event['event_type']}\ndata: {json.dumps(event['payload'], ensure_ascii=False)}\n\n"
-                if any(event["event_type"] in {"job.completed", "job.failed"} for event in batch):
+                if any(event["event_type"] in {"job.completed", "job.failed", "job.cancelled"} for event in batch):
                     return
                 continue
             yield ": keep-alive\n\n"; time.sleep(1)

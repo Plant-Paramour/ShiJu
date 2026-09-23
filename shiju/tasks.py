@@ -105,6 +105,8 @@ class TaskRequest:
     hanpai: HanpaiOptions = field(default_factory=HanpaiOptions)
     tang: TangOptions = field(default_factory=TangOptions)
     pailv: PailvOptions = field(default_factory=PailvOptions)
+    rhyme_mode: str = "auto"
+    rhyme_parts: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -124,6 +126,8 @@ class TaskRuntime:
     policy_tiers: tuple[PolicyTier, ...]
     processor_config: ProcessorConfig
     output_transform: Callable[[str], str] = _identity_output
+    rhyme_mode: str = "auto"
+    rhyme_parts: dict[str, str] = field(default_factory=dict)
 
     def create_processor(
         self,
@@ -135,7 +139,10 @@ class TaskRuntime:
         activation_marker: str = CONTENT_MARKER,
     ) -> ConstrainedLogitsProcessor:
         if controller is None:
-            session = self.profile.create_session()
+            session = self.profile.create_session(
+                rhyme_mode=self.rhyme_mode,
+                rhyme_parts=self.rhyme_parts,
+            )
             state_machine = GenerationStateMachine(self.profile.layout)
             controller = GenerationController(state_machine, session)
         return ConstrainedLogitsProcessor(
@@ -187,6 +194,8 @@ class TemplateTaskFactory:
             processor_config=ProcessorConfig(
                 strict_polyphonic=request.strict_polyphonic,
             ),
+            rhyme_mode=request.rhyme_mode,
+            rhyme_parts=dict(request.rhyme_parts),
         )
 
 
@@ -252,6 +261,8 @@ class RelationalTaskFactory:
                 separator_empty_returns_raw=True,
                 strict_polyphonic=request.strict_polyphonic,
             ),
+            rhyme_mode=request.rhyme_mode,
+            rhyme_parts=dict(request.rhyme_parts),
         )
 
 
@@ -307,6 +318,8 @@ class HanpaiTaskFactory:
                 strict_polyphonic=request.strict_polyphonic,
             ),
             output_transform=_strip_hanpai_caesuras,
+            rhyme_mode=request.rhyme_mode,
+            rhyme_parts=dict(request.rhyme_parts),
         )
 
 
@@ -360,6 +373,8 @@ class PailvTaskFactory:
             processor_config=ProcessorConfig(
                 strict_polyphonic=request.strict_polyphonic,
             ),
+            rhyme_mode=request.rhyme_mode,
+            rhyme_parts=dict(request.rhyme_parts),
         )
 
 

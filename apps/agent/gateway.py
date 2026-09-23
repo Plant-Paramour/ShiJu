@@ -5,6 +5,7 @@ import random
 import threading
 import time
 import tomllib
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -35,7 +36,7 @@ class _EndpointState:
     active: int = 0
     failures: int = 0
     successes: int = 0
-    latency_ms: list[float] = field(default_factory=list)
+    latency_ms: deque[float] = field(default_factory=lambda: deque(maxlen=100))
     last_status_code: int | None = None
     cooldown_until: float = 0.0
     semaphore: threading.BoundedSemaphore | None = None
@@ -79,7 +80,11 @@ class ModelGateway(ChatModel):
     def __init__(self, endpoints: Sequence[EndpointConfig], *, max_attempts: int = 3, clock=time.monotonic):
         if not endpoints:
             raise ValueError("Model Gateway 至少需要一个端点")
+        if max_attempts < 1:
+            raise ValueError("Model Gateway 的最大尝试次数必须为正数")
         for endpoint in endpoints:
+            if not all((endpoint.provider_id.strip(), endpoint.base_url.strip(), endpoint.model.strip(), endpoint.secret_ref.strip())):
+                raise ValueError("端点必须配置 provider_id、base_url、model 和 secret_ref")
             if endpoint.tier not in {"primary", "secondary", "emergency"}:
                 raise ValueError(f"未知端点层级: {endpoint.tier}")
             if endpoint.max_concurrency < 1 or endpoint.weight < 1 or endpoint.timeout_seconds <= 0:
@@ -224,6 +229,7 @@ class ModelGateway(ChatModel):
 
     def _apply_cooldown(self, state: _EndpointState, exc: Exception) -> None:
         status_code = getattr(exc, "status_code", None)
+        state.last_status_code = status_code
         if status_code in {401, 403}:
             state.cooldown_until = self._clock() + 3600
         elif status_code == 429:
@@ -242,4 +248,18 @@ class ModelGateway(ChatModel):
         return isinstance(exc, (OSError, TimeoutError))
 
     def status(self) -> list[dict[str, Any]]:
-        return [{"provider_id": s.config.provider_id, "model": s.config.model, "tier": s.config.tier, "active": s.active, "failures": s.failures, "successes": s.successes, "latency_ms": list(s.latency_ms[-20:]), "last_status_code": s.last_status_code, "cooldown_until": s.cooldown_until} for s in self._states]
+        snapshots = []
+        for state in self._states:
+            with state.lock:
+                snapshots.append({
+                    "provider_id": state.config.provider_id,
+                    "model": state.config.model,
+                    "tier": state.config.tier,
+                    "active": state.active,
+                    "failures": state.failures,
+                    "successes": state.successes,
+                    "latency_ms": list(state.latency_ms)[-20:],
+                    "last_status_code": state.last_status_code,
+                    "cooldown_until": state.cooldown_until,
+                })
+        return snapshots

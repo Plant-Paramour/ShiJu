@@ -1,0 +1,59 @@
+{
+  "name": "逍遥乐",
+  "aliases": [],
+  "description": "调见黄庭坚《琴趣外篇》，即赋本意。",
+  "default_variant": "黄庭坚",
+  "default_variant_source_id": 1593,
+  "variants": [
+    {
+      "name": "黄庭坚",
+      "source_id": 1593,
+      "length_category": "long",
+      "variants_description": "此调祇此一词，无别首可校。",
+      "rhyme_type": "仄韵",
+      "number_of_stanzas": 2,
+      "stanza1": {
+        "rhyme_1_positions": [
+          1,
+          3,
+          6,
+          7,
+          9,
+          11
+        ],
+        "lines": [
+          "平仄仄平平仄",
+          "仄仄平平",
+          "平仄仄平平仄",
+          "仄仄平平",
+          "仄仄平平",
+          "仄仄平平平仄",
+          "仄平平仄",
+          "仄平平、仄仄平平",
+          "仄平平仄",
+          "仄仄仄平平",
+          "仄仄平仄"
+        ]
+      },
+      "stanza2": {
+        "rhyme_1_positions": [
+          1,
+          2,
+          4,
+          6,
+          8
+        ],
+        "lines": [
+          "平仄平平平仄",
+          "仄平平平仄仄",
+          "平平仄平仄",
+          "平仄仄、仄平仄",
+          "平平仄仄仄",
+          "平仄仄平平仄",
+          "平平仄平平仄",
+          "平平平仄"
+        ]
+      }
+    }
+  ]
+}

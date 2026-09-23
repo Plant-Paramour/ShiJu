@@ -19,8 +19,8 @@ def _section_or_404(request: Request, section_id: str):
 
 def _can_write(request: Request, user: dict, section_id: str):
     section = _section_or_404(request, section_id)
-    if section["is_locked"] and user.get("role") != "admin": raise HTTPException(status_code=423, detail="分区已锁定")
-    if request.app.state.forum.permission(user["id"], section["id"]) not in {"write", "moderate"} and user.get("role") != "admin": raise HTTPException(status_code=403, detail="没有发帖权限")
+    if section["is_locked"] and user.get("role") not in {"admin", "developer"}: raise HTTPException(status_code=423, detail="分区已锁定")
+    if request.app.state.forum.permission(user["id"], section["id"]) not in {"write", "moderate"} and user.get("role") not in {"admin", "developer"}: raise HTTPException(status_code=403, detail="没有发帖权限")
     return section
 
 
@@ -63,7 +63,7 @@ def get_thread(thread_id: str, request: Request, authorization: str | None = Hea
 def patch_thread(thread_id: str, body: ForumThreadPatchModel, request: Request, authorization: str | None = Header(default=None)):
     user = _user(request, authorization); thread = request.app.state.forum.get_thread(thread_id)
     if not thread: raise HTTPException(status_code=404, detail="主题帖不存在")
-    moderate = request.app.state.forum.permission(user["id"], thread["section_id"]) == "moderate" or user.get("role") == "admin"
+    moderate = request.app.state.forum.permission(user["id"], thread["section_id"]) == "moderate" or user.get("role") in {"admin", "developer"}
     if thread["author"]["id"] != user["id"] and not moderate: raise HTTPException(status_code=403, detail="只能编辑自己的主题帖")
     fields = body.model_dump(exclude_none=True)
     if fields.get("section_id") and not moderate: raise HTTPException(status_code=403, detail="只有版主可以移动主题")
@@ -75,7 +75,7 @@ def patch_thread(thread_id: str, body: ForumThreadPatchModel, request: Request, 
 def delete_thread(thread_id: str, request: Request, authorization: str | None = Header(default=None)):
     user = _user(request, authorization); thread = request.app.state.forum.get_thread(thread_id)
     if not thread: raise HTTPException(status_code=404, detail="主题帖不存在")
-    moderate = request.app.state.forum.permission(user["id"], thread["section_id"]) == "moderate" or user.get("role") == "admin"
+    moderate = request.app.state.forum.permission(user["id"], thread["section_id"]) == "moderate" or user.get("role") in {"admin", "developer"}
     if not moderate and thread["author"]["id"] != user["id"]: raise HTTPException(status_code=403, detail="无权删除该主题帖")
     if not request.app.state.forum.delete_thread(thread_id, user["id"], moderate=moderate): raise HTTPException(status_code=404, detail="主题帖不存在")
 
@@ -118,7 +118,7 @@ def patch_reply(reply_id: str, body: ForumReplyPatchModel, request: Request, aut
     user = _user(request, authorization)
     with request.app.state.forum.database.connect() as db: row = db.execute("SELECT r.author_id,t.section_id FROM forum_replies r JOIN forum_threads t ON t.id=r.thread_id WHERE r.id=?", (reply_id,)).fetchone()
     if not row: raise HTTPException(status_code=404, detail="回复不存在")
-    moderate = request.app.state.forum.permission(user["id"], row["section_id"]) == "moderate" or user.get("role") == "admin"
+    moderate = request.app.state.forum.permission(user["id"], row["section_id"]) == "moderate" or user.get("role") in {"admin", "developer"}
     if row["author_id"] != user["id"] and not moderate: raise HTTPException(status_code=403, detail="只能编辑自己的回复")
     if not request.app.state.forum.update_reply(reply_id, user["id"], body.content, moderate=moderate): raise HTTPException(status_code=404, detail="回复不存在")
     return {"status": "updated"}
@@ -129,7 +129,7 @@ def delete_reply(reply_id: str, request: Request, authorization: str | None = He
     user = _user(request, authorization)
     with request.app.state.forum.database.connect() as db: row = db.execute("SELECT r.author_id,t.section_id FROM forum_replies r JOIN forum_threads t ON t.id=r.thread_id WHERE r.id=?", (reply_id,)).fetchone()
     if not row: raise HTTPException(status_code=404, detail="回复不存在")
-    moderate = request.app.state.forum.permission(user["id"], row["section_id"]) == "moderate" or user.get("role") == "admin"
+    moderate = request.app.state.forum.permission(user["id"], row["section_id"]) == "moderate" or user.get("role") in {"admin", "developer"}
     if not moderate and row["author_id"] != user["id"]: raise HTTPException(status_code=403, detail="无权删除该回复")
     if not request.app.state.forum.delete_reply(reply_id, user["id"], moderate=moderate): raise HTTPException(status_code=404, detail="回复不存在")
 

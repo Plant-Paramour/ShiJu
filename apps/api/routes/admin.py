@@ -10,7 +10,13 @@ router = APIRouter(prefix="/v1/admin", tags=["admin"])
 
 def admin_user(request: Request, authorization: str | None):
     user = current_user(request, authorization)
-    if user.get("role") != "admin": raise HTTPException(status_code=403, detail="需要管理员权限")
+    if user.get("role") not in {"admin", "developer"}: raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user
+
+
+def developer_user(request: Request, authorization: str | None):
+    user = current_user(request, authorization)
+    if user.get("role") != "developer": raise HTTPException(status_code=403, detail="需要开发者权限")
     return user
 
 
@@ -29,7 +35,9 @@ def users(request: Request, authorization: str | None = Header(default=None), q:
 
 @router.post("/users", status_code=201)
 def create_user(body: AdminUserCreateModel, request: Request, authorization: str | None = Header(default=None)):
-    admin_user(request, authorization)
+    actor = admin_user(request, authorization)
+    if body.role != "user" and actor.get("role") != "developer":
+        raise HTTPException(status_code=403, detail="只有开发者可以授予管理员或开发者角色")
     try: return request.app.state.users.create_user(body.username, body.password, body.display_name, body.role)
     except Exception as exc: raise HTTPException(status_code=409, detail="用户名已存在") from exc
 
@@ -37,7 +45,11 @@ def create_user(body: AdminUserCreateModel, request: Request, authorization: str
 @router.patch("/users/{user_id}")
 def patch_user(user_id: str, body: AdminUserPatchModel, request: Request, authorization: str | None = Header(default=None)):
     actor = admin_user(request, authorization)
-    if user_id == actor["id"] and body.role == "user": raise HTTPException(status_code=400, detail="不能移除自己的管理员权限")
+    if body.role is not None:
+        if actor.get("role") != "developer":
+            raise HTTPException(status_code=403, detail="只有开发者可以修改角色")
+        if user_id == actor["id"]:
+            raise HTTPException(status_code=400, detail="不能修改自己的开发者角色")
     data = body.model_dump(exclude_none=True); role = data.pop("role", None)
     if data: request.app.state.users.update_profile(user_id, data)
     if role: request.app.state.users.set_role(user_id, role)
@@ -50,6 +62,10 @@ def patch_user(user_id: str, body: AdminUserPatchModel, request: Request, author
 def delete_user(user_id: str, request: Request, authorization: str | None = Header(default=None)):
     actor = admin_user(request, authorization)
     if user_id == actor["id"]: raise HTTPException(status_code=400, detail="不能删除当前管理员")
+    target = request.app.state.users.get(user_id)
+    if target is None: raise HTTPException(status_code=404, detail="用户不存在")
+    if target.get("role") != "user" and actor.get("role") != "developer":
+        raise HTTPException(status_code=403, detail="只有开发者可以删除管理员或开发者")
     if not request.app.state.users.delete_user(user_id): raise HTTPException(status_code=404, detail="用户不存在或不可删除")
 
 

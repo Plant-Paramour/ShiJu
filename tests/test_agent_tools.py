@@ -155,6 +155,73 @@ def test_generation_supports_up_to_five_candidates():
     assert proposal["proposal"]["candidate_count"] == 5
 
 
+def test_generation_carries_explicit_rhyme_selection():
+    toolbox = _toolbox()
+    proposal = toolbox.execute(
+        "prepare_generation",
+        {
+            "meter_type": "唐诗",
+            "form_name": "七言绝句",
+            "theme": "秋江",
+            "rhyme_dict_name": "Pinshui",
+            "rhyme_mode": "fixed",
+            "rhyme_parts": {"1": "一东"},
+            "requirement": "写秋江晚景。",
+        },
+        ToolContext("写一首平水韵一东七绝", 1),
+    )
+
+    assert proposal["proposal"]["rhyme_mode"] == "fixed"
+    assert proposal["proposal"]["rhyme_parts"] == {"1": "一东"}
+
+
+def test_generation_rejects_unknown_rhyme_part():
+    toolbox = _toolbox()
+    with pytest.raises(ValueError, match="未找到韵组"):
+        toolbox.execute(
+            "prepare_generation",
+            {
+                "meter_type": "唐诗",
+                "form_name": "七言绝句",
+                "theme": "秋江",
+                "rhyme_dict_name": "Pinshui",
+                "rhyme_mode": "fixed",
+                "rhyme_parts": {"1": "不存在"},
+                "requirement": "写秋江晚景。",
+            },
+            ToolContext("写一首诗", 1),
+        )
+
+
+def test_generation_rejects_rhyme_part_with_wrong_tone():
+    from shiju.data import RhymeLexicon
+
+    lexicon = RhymeLexicon("Rhyme/Pinshui.json")
+    oblique_only = next(
+        part
+        for part in {item_part for _, item_part, _ in lexicon.iter_rhyme_entries()}
+        if {
+            tone for _, item_part, tone in lexicon.iter_rhyme_entries() if item_part == part
+        }
+        == {"仄"}
+    )
+    toolbox = _toolbox()
+    with pytest.raises(ValueError, match="平韵"):
+        toolbox.execute(
+            "prepare_generation",
+            {
+                "meter_type": "唐诗",
+                "form_name": "七言绝句",
+                "theme": "秋江",
+                "rhyme_dict_name": "Pinshui",
+                "rhyme_mode": "fixed",
+                "rhyme_parts": {"1": oblique_only},
+                "requirement": "写秋江晚景。",
+            },
+            ToolContext("写一首诗", 1),
+        )
+
+
 def test_rewrite_accepts_six_target_lines_in_lushi():
     toolbox = _toolbox()
     proposal = toolbox.execute(

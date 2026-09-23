@@ -30,8 +30,16 @@ def _output_contract(
     planning_marker: str | None = None,
 ) -> str:
     planning = planning_instruction or (
-        "请先分别从题旨立意、章法布局、意象选择、用典化用和用韵策略五方面进行散文分析，"
-        "每方面二至三句；分析中不得提前写出诗句或词句草稿。"
+        "先输出创作构思，必须包含以下五项，每项一至三句，"
+        "分析中不得提前写出诗句或词句草稿：\n"
+        "1. 主线：从事理线、情景线、情感线、隐喻线中明确选择一条，"
+        "并用一句话说清全篇如何推进。\n"
+        "2. 写前四定：对象、主线、转折位置及原因、最终落点。\n"
+        "3. 分段结构：按起承转收或词牌上下阕/多叠，说明每段承担的"
+        "叙事、视线或情绪功能。\n"
+        "4. 核心意象：指定一个中心意象或隐喻系统，说明前后如何照应，"
+        "不得堆砌孤立意象。\n"
+        "5. 具体信息：把抽象情感落实为动作、物件、声音、时间或空间细节。"
     )
     planning_step = f"1. 先输出{planning_label}。\n"
     planning_example = ""
@@ -47,6 +55,10 @@ def _output_contract(
         "2. 现代语义须转换为自然的古典表达，但不得省略人物、时间、事件、关切或情感。\n"
         "3. 正文须符合指定诗体、主题和古典诗词审美。\n"
         "4. 同时根据格律约束安排字词，不得为了格律省略核心叙事。\n\n"
+        "写作条理要求：先确定一条贯穿全篇的事理线、情景线、情感线或隐喻线，再逐句落笔。\n"
+        "写前明确对象、主线、转折及落点；写中每句必须推进主线、移动视线、加深情绪或提供具体信息。\n"
+        "跳跃必须有因果、对比、重复、反义或物象同构等暗桥；抽象情感必须落到动作、物件、声音、时间或空间。\n"
+        "围绕一个中心意象建立前后照应的系统，不堆砌孤立意象；结尾用动作、物象或反转收束，不总结、不口号化升华。\n\n"
         f"{planning}\n\n"
         "必须按以下格式输出：\n"
         f"{planning_step}"
@@ -73,7 +85,9 @@ def _narrative_section(requirement: str) -> str:
         "【核心叙事】\n"
         "以下要求必须全部体现在正文中，不得只表现笼统的主题或相思；"
         "可以改写为古典语汇，但不得省略或泛化：\n"
-        f"{requirement}"
+        f"{requirement}\n"
+        "写作前请在心里逐项确认：每一项对应正文哪一句或哪几句？"
+        "若有任何一项无法落实，必须先调整结构，不得跳过。"
     )
 
 
@@ -112,6 +126,29 @@ def _template_meter_section(template: MeterTemplate, rhyme_name: str) -> str:
             rules.append(
                 f"- 第{line_index}句（{line.layout.length}字）：{line.raw_pattern}{rhyme_note}"
             )
+    if template.repetition_groups:
+        rules.append("叠加要求：阕、句、字序号均从1开始，起止位置均包含。以下每组位置必须按对应类别执行：")
+        for group in template.repetition_groups:
+            positions = group.get("positions", [])
+            rendered = []
+            for position in positions:
+                if not isinstance(position, dict):
+                    continue
+                rendered.append(
+                    f"第{position.get('stanza')}阕第{position.get('start', ['?','?'])[0]}句第{position.get('start', ['?','?'])[1]}字"
+                    f"至第{position.get('end', ['?','?'])[0]}句第{position.get('end', ['?','?'])[1]}字"
+                )
+            if rendered:
+                kind = group.get("kind", "叠字")
+                instructions = {
+                    "叠韵": "这些范围包含韵脚，范围内每个字必须相同",
+                    "叠句": "这些范围是完整句子，整句文字必须逐字相同",
+                    "叠字": "这些范围是句内字，范围内每个字必须相同",
+                }
+                rules.append(
+                    f"- {kind}组{group.get('id', '?')}：" + "；".join(rendered)
+                    + f"。{instructions.get(kind, instructions['叠字'])}。"
+                )
     return "\n".join(rules)
 
 
@@ -122,14 +159,22 @@ def _template_task_prompt(
     requirement: str,
     variant_name: str | None = None,
     meter_text: str = "",
+    has_repetition: bool = False,
 ) -> str:
     variant_line = f"\n变体：{variant_name}" if variant_name else ""
     meter_section = f"{meter_text}\n\n" if meter_text else ""
+    repetition_note = (
+        "\n本词牌含叠字/叠句/叠韵要求，规划时必须说明这些位置"
+        "如何与主线、意象系统配合，不得为叠而叠。\n"
+        if has_repetition
+        else ""
+    )
     return (
         "【创作形式】\n"
         f"词牌：{name}{variant_line}\n"
         f"用韵：{rhyme_name}\n"
-        "词牌的字数、句读、平仄和押韵须严格遵守。\n\n"
+        "词牌的字数、句读、平仄和押韵须严格遵守。\n"
+        f"{repetition_note}\n"
         f"{_narrative_section(requirement)}\n\n"
         f"{_style_section(theme)}\n\n"
         f"{meter_section}"
@@ -520,112 +565,3 @@ def build_hanpai_prompt(
     return _apply_thinking(messages, use_thinking)
 
 
-def _obsolete_build_hanpai_prompt(
-    task_type: str,
-    form_name: str,
-    theme: str,
-    line_lengths: tuple[int, int, int],
-    requirement: str = "",
-    use_thinking: bool = True,
-    rhyme_dict_name: str = "Xinyun",
-    season_word: str | None = None,
-    season_words: tuple[str, ...] = (),
-    season: str | None = None,
-    forbid_isolated_level: bool = False,
-    allow_aojiu: bool = False,
-    forbid_three_same_ending: bool = False,
-    rhyme_scheme: str | None = None,
-) -> list[dict[str, str]]:
-    if task_type != "instruction":
-        raise ValueError(f"汉俳当前只支持 instruction，收到: {task_type}")
-
-    pattern = "-".join(str(length) for length in line_lengths)
-    rhyme_name = RHYME_NAMES.get(rhyme_dict_name, rhyme_dict_name)
-    season_inputs = (season_word is not None, bool(season_words), season is not None)
-    if sum(season_inputs) > 1:
-        raise ValueError("季语、候选季语和季节只能配置其中一种")
-    if season_word is not None:
-        season_rule = (
-            f"必须在正文中原样、自然地使用指定季语“{season_word.strip()}”，"
-            "不得只在标题或创作分析中提及。"
-        )
-    elif season_words:
-        candidates = "、".join(f"“{word.strip()}”" for word in season_words)
-        season_rule = (
-            f"必须且只能从候选季语 {candidates} 中选择一个，并在正文中原样、"
-            "自然地使用；不得只在标题或创作分析中提及。"
-        )
-    elif season is not None:
-        season_rule = (
-            f"指定季节为“{season.strip()}”。必须在正文中使用一个无需解释即可明显指向"
-            "该季节的具体季语或季节意象，不得只写季节名称代替具体意象。"
-        )
-    else:
-        season_rule = (
-            "未指定季语或季节，但正文仍必须自行选择并使用一个明显、具体的季语或"
-            "季节意象。"
-        )
-    season_rule += (
-        "读者必须仅凭正文即可判断相应季节；未加时令限定的云、月、风、雨、柳等"
-        "一般景物不视为明显季语。"
-    )
-
-    prosody_rules = []
-    if forbid_isolated_level:
-        if allow_aojiu:
-            prosody_rules.append("禁止未获补救的孤平，允许使用邻位平声完成拗救")
-        else:
-            prosody_rules.append("禁止孤平")
-    elif allow_aojiu:
-        prosody_rules.append("允许自然使用拗救，但不强制安排")
-    if forbid_three_same_ending:
-        prosody_rules.append("每行句尾不得出现三连平或三连仄")
-    prosody_text = "；".join(prosody_rules) if prosody_rules else "不额外限定平仄格律"
-
-    rhyme_descriptions = {
-        "AAA": "三行句尾均押同一韵部",
-        "ABA": "第一、三行句尾押同一韵部，第二行不押",
-        "BAA": "第二、三行句尾押同一韵部，第一行不押",
-    }
-    if rhyme_scheme:
-        rhyme_text = (
-            f"采用 {rhyme_scheme} 式：{rhyme_descriptions[rhyme_scheme]}；"
-            f"依据{rhyme_name}，首个押韵句确定声调和韵部，后续不得换韵。"
-        )
-    else:
-        rhyme_text = "不设置押韵要求。"
-
-    rules = (
-        "【汉俳规则】\n"
-        f"- 格式：{pattern}，正文恰好三行，依次为"
-        f"{line_lengths[0]}字、{line_lengths[1]}字、{line_lengths[2]}字\n"
-        "- 句读：五字句严格按 2/3 划分，七字句严格按 2/2/3 划分；"
-        "token 不得跨越句读边界，并应避免边界两侧粘连成词\n"
-        "- 行间只换行，行尾不输出逗号、句号等标点\n"
-        f"- 季语：{season_rule}\n"
-        f"- 格律：{prosody_text}\n"
-        f"- 押韵：{rhyme_text}\n"
-        "- 语言凝练，三行须共同构成一次完整的观察、转折或余韵"
-    )
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "你是一位擅长汉俳创作的诗人，能够在极短篇幅中凝聚具体景象与情感。\n\n"
-                + _output_contract(form_name)
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                "【创作形式】\n"
-                f"诗体：{form_name}\n"
-                f"篇幅：{pattern}\n\n"
-                f"{_narrative_section(requirement)}\n\n"
-                f"{_style_section(theme)}\n\n"
-                f"{rules}\n\n"
-                f"{_final_section(form_name)}"
-            ),
-        },
-    ]
-    return _apply_thinking(messages, use_thinking)

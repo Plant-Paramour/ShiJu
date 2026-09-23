@@ -4,7 +4,7 @@ import {
   evaluateHaiku,
   evaluatePailv,
   evaluateSongci,
-} from "./core.js?v=7";
+} from "./core.js?v=8";
 
 export const RHYME_BOOKS = {
   Xinyun: { file: "Xinyun.json", name: "中华新韵" },

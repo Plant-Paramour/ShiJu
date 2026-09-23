@@ -1,0 +1,55 @@
+{
+  "name": "大椿",
+  "aliases": [],
+  "description": "调见《松隐集》，盖应制寿词也，取《庄子》“大椿”句为名。",
+  "default_variant": "曹勛",
+  "default_variant_source_id": 1714,
+  "variants": [
+    {
+      "name": "曹勛",
+      "source_id": 1714,
+      "length_category": "long",
+      "variants_description": "此调祇此一词，无别首可校。",
+      "rhyme_type": "仄韵",
+      "number_of_stanzas": 2,
+      "stanza1": {
+        "rhyme_1_positions": [
+          3,
+          5,
+          7,
+          9
+        ],
+        "lines": [
+          "平仄平平",
+          "平平仄平",
+          "平仄平平平仄",
+          "平仄仄平仄",
+          "仄仄平平仄",
+          "平仄平平平仄仄",
+          "仄仄仄、平仄平仄",
+          "平平仄仄仄平",
+          "仄仄平平平仄"
+        ]
+      },
+      "stanza2": {
+        "rhyme_1_positions": [
+          3,
+          5,
+          7,
+          9
+        ],
+        "lines": [
+          "平平仄仄平仄平",
+          "仄仄仄平",
+          "仄仄平仄",
+          "仄仄平平仄",
+          "仄平平仄仄",
+          "平平平仄平平仄",
+          "仄平平、平平平仄",
+          "仄仄平平",
+          "平平平、仄平平仄"
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "name": "茅山逢故人",
+  "aliases": [],
+  "description": "调见元人《叶儿乐府》，张雨句曲道中送友，自制词也。",
+  "default_variant": "张雨",
+  "default_variant_source_id": 484,
+  "variants": [
+    {
+      "name": "张雨",
+      "source_id": 484,
+      "length_category": "short",
+      "variants_description": "此词亦无他首可校。",
+      "rhyme_type": "仄韵",
+      "number_of_stanzas": 2,
+      "stanza1": {
+        "rhyme_1_positions": [
+          1,
+          2,
+          5
+        ],
+        "lines": [
+          "平仄平平平仄",
+          "平仄平平平仄",
+          "仄仄平平",
+          "平平平仄",
+          "仄平平仄"
+        ]
+      },
+      "stanza2": {
+        "rhyme_1_positions": [
+          2,
+          5
+        ],
+        "lines": [
+          "平平仄仄平平",
+          "平仄平平平仄",
+          "仄仄平平",
+          "平平平仄",
+          "仄平平仄"
+        ]
+      }
+    }
+  ]
+}

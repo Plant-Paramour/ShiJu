@@ -36,12 +36,18 @@ const prosodyInspectorBody = document.querySelector("#prosody-inspector-body");
 
 function announce(message) {
   window.clearTimeout(statusTimer);
-  siteStatus.textContent = message;
+  siteStatus.replaceChildren();
+  if (message.includes("已加入默认合集")) {
+    const copy = document.createElement("span"); copy.textContent = "已加入默认合集";
+    const action = document.createElement("button"); action.type = "button"; action.className = "site-status__action"; action.textContent = "点击修改合集";
+    action.addEventListener("click", () => { const id = window.location.hash.match(/^#forum\/thread\/([^/]+)/)?.[1]; if (id) openCollectionPicker("thread", decodeURIComponent(id), null); });
+    siteStatus.append(copy, action); siteStatus.onclick = null;
+  } else { siteStatus.textContent = message; siteStatus.onclick = null; }
   siteStatus.classList.add("is-visible");
   statusTimer = window.setTimeout(() => {
     siteStatus.classList.remove("is-visible");
     siteStatus.textContent = "";
-  }, 2600);
+  }, 5000);
 }
 
 function closeNavigation() {
@@ -77,14 +83,14 @@ function openDrawer(drawer) {
 
 function showRoute(route, options = {}) {
   const protectedRoutes = new Set(["forum", "forum-thread", "forum-compose", "notifications", "profile", "public-profile", "admin"]);
-  if (protectedRoutes.has(route) && !currentUser) {
+  if (protectedRoutes.has(route) && !currentUser && !authToken) {
     loginReturnHash = window.location.hash || `#${route}`;
     if (window.location.hash !== "#home") window.history.replaceState(null, "", "#home");
     route = "home";
     window.setTimeout(() => requireLogin(), 0);
   }
   const resolvedRoute = route === "home" && currentUser ? "chat" : (views.has(route) ? route : "home");
-  if (route === "home" && currentUser && window.location.hash !== "#chat") window.history.replaceState(null, "", "#chat");
+  if (route === "home" && currentUser && !window.location.hash && window.location.hash !== "#chat") window.history.replaceState(null, "", "#chat");
   for (const [name, view] of views) view.hidden = name !== resolvedRoute;
   for (const link of navLinks) {
     const isCurrent = link.dataset.routeLink === resolvedRoute;
@@ -590,6 +596,24 @@ async function refreshConversationMessages(conversationId) {
 let profilePoems = [];
 let ownedPoems = [];
 let favoritePoems = [];
+let favoriteThreads = JSON.parse(localStorage.getItem("shiju_favorite_threads") || "[]");
+let favoriteThreadCollections = JSON.parse(localStorage.getItem("shiju_thread_collections") || "[]");
+let pendingCollection = null;
+function saveFavoriteThreads() { localStorage.setItem("shiju_favorite_threads", JSON.stringify(favoriteThreads)); }
+function saveThreadCollections() { localStorage.setItem("shiju_thread_collections", JSON.stringify(favoriteThreadCollections)); }
+function ensureDefaultThreadCollection() { let collection = favoriteThreadCollections.find((item) => item.name === "默认合集"); if (!collection) { collection = { name: "默认合集", items: [] }; favoriteThreadCollections.unshift(collection); saveThreadCollections(); } return collection; }
+function openCollectionPicker(kind, item, onDone) {
+  pendingCollection = { kind, item, onDone }; const modal = document.querySelector("#collection-modal"); const list = document.querySelector("#collection-modal-list");
+  document.querySelector("#collection-create-form").hidden = true; document.querySelector("#collection-create-status").textContent = ""; document.querySelector("#collection-name-input").value = "";
+  if (!kind) { list.innerHTML = '<p class="collection-modal-hint">请选择要新建的合集类型</p>'; [ ["poem", "作品合集"], ["thread", "帖子合集"] ].forEach(([value, label]) => { const b = document.createElement("button"); b.type = "button"; b.className = "collection-choice"; b.textContent = `＋ 新建${label}`; b.addEventListener("click", () => openCollectionPicker(value, null)); list.append(b); }); document.querySelector("#collection-modal-new").hidden = true; modal.hidden = false; return; }
+  document.querySelector("#collection-modal-new").hidden = false;
+  const names = kind === "poem" ? profileCollections.map((x) => x.name) : favoriteThreadCollections.map((x) => x.name); list.replaceChildren();
+  if (!names.length) list.innerHTML = '<p class="empty-state">暂无合集，请先新建。</p>';
+  names.forEach((name) => { const b = document.createElement("button"); b.type = "button"; b.className = "collection-choice"; b.textContent = name; b.addEventListener("click", () => { onDone?.(name); modal.hidden = true; }); list.append(b); }); modal.hidden = false;
+}
+document.querySelectorAll("[data-collection-close]").forEach((el) => el.addEventListener("click", () => { document.querySelector("#collection-modal").hidden = true; document.querySelector("#collection-create-form").hidden = true; document.querySelector("#collection-modal-new").hidden = false; }));
+document.querySelector("#collection-modal-new")?.addEventListener("click", () => { document.querySelector("#collection-modal-new").hidden = true; document.querySelector("#collection-create-form").hidden = false; document.querySelector("#collection-name-input").focus(); });
+document.querySelector("#collection-create-submit")?.addEventListener("click", async (event) => { if (!pendingCollection) return; const input = document.querySelector("#collection-name-input"); const status = document.querySelector("#collection-create-status"); const clean = input.value.trim(); if (!clean) { status.textContent = "请输入合集名称"; return; } const target = pendingCollection.kind === "poem" ? profileCollections : favoriteThreadCollections; const renameId = event.currentTarget.dataset.renameId; if (target.some((x) => x.name === clean && x.id !== renameId)) { status.textContent = "同类合集不能重名"; return; } try { if (renameId) { await apiFetch(`/v1/profile/poem-collections/${renameId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: clean }) }); delete event.currentTarget.dataset.renameId; event.currentTarget.textContent = "确认新建"; } else if (pendingCollection.kind === "poem") await apiFetch("/v1/profile/poem-collections", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: clean }) }); else { target.push({ name: clean, items: [] }); saveThreadCollections(); } pendingCollection.onDone?.(clean); input.value = ""; document.querySelector("#collection-create-form").hidden = true; document.querySelector("#collection-modal-new").hidden = false; document.querySelector("#collection-modal").hidden = true; await loadProfileData(); } catch (error) { status.textContent = error.message; } });
 let profileCollections = [];
 
 function parsePoemFields(poem) {
@@ -687,7 +711,8 @@ function violationMessages(result = {}) {
 }
 
 function decisionMessages(result = {}) {
-  const polyphonic = (result.polyphonicDecisions || []).map((item) => item.message);
+  const polyphonic = (result.polyphonicDecisions || []).map((item) =>
+    String(item.message || "").replaceAll("平/仄", "多"));
   const aoJiu = (result.aoJiu?.details || []).map((item) => item.message);
   if (!polyphonic.length && !aoJiu.length) return ["未发现需要人工复核的多音字或拗救判定。"];
   return [...polyphonic, ...aoJiu];
@@ -750,13 +775,13 @@ function openProsodyInspector(evaluation, title = "评分详情") {
 
   if (Array.isArray(result.lines) && result.lines.length) {
     const section = document.createElement("section");
-    const heading = document.createElement("h3"); heading.textContent = "逐字平仄";
+    const heading = document.createElement("h3"); heading.textContent = "逐字标注";
     const lines = document.createElement("div"); lines.className = "prosody-inspector__lines";
     result.lines.forEach((line, index) => {
       const row = document.createElement("div");
       const text = document.createElement("p"); text.textContent = `${index + 1}. ${line.text || (line.characters || []).map((item) => item.char).join("")}`;
       const tones = document.createElement("p"); tones.className = "prosody-inspector__tones";
-      tones.textContent = (line.characters || []).map((item) => item.tone || "·").join(" ");
+      tones.textContent = (line.characters || []).map((item) => item.polyphonic ? "多" : (item.tone || "·")).join(" ");
       row.append(text, tones); lines.append(row);
     });
     section.append(heading, lines); prosodyInspectorBody.append(section);
@@ -893,6 +918,8 @@ function createPoemHandscroll(poem, { resultLabel = "", showTime = false, evalua
       time.textContent = "创建时间未知";
     }
     scoreFooter.append(time);
+    const authorName = value.author_display_name || value.author_username;
+    if (authorName && (!currentUser || (value.author_id && value.author_id !== currentUser.id))) { const source = document.createElement("span"); source.className = "poem-source-user"; source.textContent = `来自用户 ${authorName}`; scoreFooter.append(source); }
   }
   scoreFooter.append(footerActions);
   scoreFooter.append(flags);
@@ -910,7 +937,7 @@ function poemCard(poem) {
   article.dataset.poemId = value.id;
   const actions = document.createElement("div"); actions.className = "poem-card__actions";
   const favorite = document.createElement("button"); favorite.type = "button"; favorite.dataset.poemAction = "favorite"; favorite.title = value.favorite ? "取消收藏" : "收藏"; favorite.setAttribute("aria-label", favorite.title); favorite.textContent = value.favorite ? "★" : "☆";
-  const collect = document.createElement("button"); collect.type = "button"; collect.dataset.poemAction = "collect"; collect.textContent = "加入合集";
+  const collect = document.createElement("button"); collect.type = "button"; collect.dataset.poemAction = "collect"; collect.textContent = "修改合集";
   const publish = document.createElement("button"); publish.type = "button"; publish.dataset.poemAction = "public"; publish.textContent = value.is_public ? "取消公开" : "公开诗作";
   const remove = document.createElement("button"); remove.type = "button"; remove.dataset.poemAction = "delete"; remove.textContent = "删除";
   actions.append(favorite, collect);
@@ -920,6 +947,7 @@ function poemCard(poem) {
 }
 
 function renderPoemList(container, poems, emptyText) {
+  if (!container) return;
   container.replaceChildren();
   if (!poems.length) { const empty = document.createElement("p"); empty.className = "empty-state"; empty.textContent = emptyText; container.append(empty); return; }
   container.append(...poems.map(poemCard));
@@ -965,24 +993,22 @@ async function loadProfileData() {
   if (!currentUser) return;
   const generation = authGeneration;
   try {
+    ensureDefaultThreadCollection();
     const [collections, conversations, followingList, publicProfile] = await Promise.all([
       apiFetch("/v1/profile/poem-collections"), apiFetch("/v1/conversations?include_deleted=true"), apiFetch("/v1/forum/following"), apiFetch(`/v1/forum/users/${encodeURIComponent(currentUser.id)}`), loadPoems(),
     ]);
     if (generation !== authGeneration) return;
     profileCollections = collections.items || [];
+    if (!profileCollections.some((item) => item.name === "默认合集")) { const created = await apiFetch("/v1/profile/poem-collections", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "默认合集" }) }); profileCollections.unshift(created); }
     document.querySelector("#profile-thread-count").textContent = (publicProfile.threads || []).length;
     document.querySelector("#profile-public-poem-count").textContent = (publicProfile.poems || []).length;
     document.querySelector("#profile-follower-count").textContent = publicProfile.follower_count || 0;
     document.querySelector("#profile-following-count").textContent = publicProfile.following_count || 0;
-    const collectionList = document.querySelector("#collection-list"); collectionList.replaceChildren();
-    if (!profileCollections.length) collectionList.innerHTML = '<p class="empty-state">还没有作品合集。</p>';
-    else profileCollections.forEach((item) => {
-      const row = document.createElement("article"); row.className = "profile-row"; row.dataset.collectionId = item.id;
-      row.innerHTML = `<div><strong></strong><span></span></div><button type="button" data-collection-action="delete">删除</button>`;
-      row.querySelector("strong").textContent = item.name; row.querySelector("span").textContent = `${item.count} 首作品`; collectionList.append(row);
-    });
+    const collectionList = document.querySelector("#collection-list"); if (!collectionList) throw new Error("收藏合集容器未找到"); collectionList.replaceChildren();
+    for (const item of profileCollections) { const group = document.createElement("details"); group.className = "favorite-collection"; group.open = item.name === "默认合集"; group.dataset.collectionId = item.id; const summary = document.createElement("summary"); summary.innerHTML = `<strong>${item.name}</strong><span>${item.count || 0} 首作品</span>`; group.append(summary); const grid = document.createElement("div"); grid.className = "profile-grid"; try { const payload = await apiFetch(`/v1/profile/poem-collections/${item.id}/items`); (payload.items || []).forEach((poem) => grid.append(poemCard(poem))); if (!payload.items?.length) grid.innerHTML = '<p class="empty-state">合集里还没有作品。</p>'; } catch (error) { grid.innerHTML = `<p class="empty-state">${error.message}</p>`; } group.append(grid); collectionList.append(group); }
     renderArchive((conversations.items || []).filter((item) => item.deleted_at));
     renderUserRows(document.querySelector("#following-list"), followingList.items || [], true);
+    const threadList = document.querySelector("#favorite-thread-list"); if (threadList) { threadList.replaceChildren(); if (!favoriteThreads.length) threadList.innerHTML = '<p class="empty-state">还没有收藏帖子。</p>'; favoriteThreads.forEach((item) => { const row = document.createElement("article"); row.className = "profile-row"; row.dataset.threadId = item.id; row.innerHTML = `<div><strong></strong><span></span></div><button type="button" class="quiet-button" data-thread-collection-edit>修改合集</button><a class="quiet-button" href="#forum/thread/${encodeURIComponent(item.id)}">查看</a>`; row.querySelector("strong").textContent = item.title; row.querySelector("span").textContent = item.created_at ? formatForumTime(item.created_at) : "收藏的主题"; threadList.append(row); }); }
   } catch (error) { announce(`个人中心加载失败：${error.message}`); }
 }
 
@@ -1009,7 +1035,9 @@ document.querySelector("#profile-work-type")?.addEventListener("change", () => l
 
 document.querySelector("#poem-list")?.parentElement?.addEventListener("click", handleProfileAction);
 document.querySelector("#favorite-list")?.parentElement?.addEventListener("click", handleProfileAction);
+document.querySelector("#collection-list")?.addEventListener("click", handleProfileAction);
 document.querySelector("#collection-list")?.addEventListener("click", async (event) => {
+  const rename = event.target.closest("[data-collection-action='rename']"); if (rename) { const row = rename.closest("[data-collection-id]"); const item = profileCollections.find((entry) => entry.id === row?.dataset.collectionId); if (!item) return; pendingCollection = { kind: "poem", item, onDone: null }; openCollectionPicker("poem", null, null); document.querySelector("#collection-name-input").value = item.name; document.querySelector("#collection-create-submit").dataset.renameId = item.id; document.querySelector("#collection-create-submit").textContent = "确认修改"; return; }
   const button = event.target.closest("[data-collection-action='delete']"); if (!button) return;
   const row = button.closest("[data-collection-id]");
   if (!window.confirm("删除这个合集？作品本身不会被删除。")) return;
@@ -1020,30 +1048,22 @@ async function handleProfileAction(event) {
   const button = event.target.closest("[data-poem-action]"); if (!button) return;
   const card = button.closest("[data-poem-id]"); const poemId = card?.dataset.poemId; if (!poemId) return;
   try {
-    if (button.dataset.poemAction === "favorite") await apiFetch(`/v1/profile/poems/${poemId}/favorite`, { method: button.textContent === "★" ? "DELETE" : "POST" });
+    if (button.dataset.poemAction === "favorite") { const adding = button.textContent !== "★"; await apiFetch(`/v1/profile/poems/${poemId}/favorite`, { method: adding ? "POST" : "DELETE" }); if (adding) { const fallback = profileCollections.find((item) => item.name === "默认合集"); if (fallback) await apiFetch(`/v1/profile/poem-collections/${fallback.id}/items`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ poem_id: poemId }) }); } }
     if (button.dataset.poemAction === "delete") { if (!window.confirm("删除这首作品？")) return; await apiFetch(`/v1/profile/poems/${poemId}`, { method: "DELETE" }); }
     if (button.dataset.poemAction === "public") await apiFetch(`/v1/profile/poems/${poemId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ is_public: button.textContent !== "取消公开" }) });
-    if (button.dataset.poemAction === "collect") {
-      if (!profileCollections.length) { announce("请先新建一个作品合集。"); return; }
-      const choice = window.prompt(`输入合集名称：\n${profileCollections.map((item) => item.name).join("、")}`);
-      const collection = profileCollections.find((item) => item.name === choice);
-      if (!collection) { announce("未找到对应合集。"); return; }
-      await apiFetch(`/v1/profile/poem-collections/${collection.id}/items`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ poem_id: poemId }) });
-    }
+    if (button.dataset.poemAction === "collect") openCollectionPicker("poem", poemId, async (choice) => { const collection = profileCollections.find((item) => item.name === choice); if (collection) await apiFetch(`/v1/profile/poem-collections/${collection.id}/items`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ poem_id: poemId }) }); await loadProfileData(); announce(`已加入「${choice}」`); });
     await loadProfileData();
   } catch (error) { announce(`操作失败：${error.message}`); }
 }
 
-document.querySelector("#new-collection-button")?.addEventListener("click", async () => {
-  const name = window.prompt("合集名称"); if (!name?.trim()) return;
-  try { await apiFetch("/v1/profile/poem-collections", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: name.trim() }) }); await loadProfileData(); } catch (error) { announce(`创建合集失败：${error.message}`); }
-});
+document.querySelector("#new-collection-button")?.addEventListener("click", () => openCollectionPicker(null, null));
 
 document.querySelector("#archive-list")?.addEventListener("click", async (event) => {
   const button = event.target.closest("[data-archive-action='restore']"); if (!button) return;
   const id = button.closest("[data-conversation-id]").dataset.conversationId;
   try { await apiFetch(`/v1/conversations/${id}/restore`, { method: "POST" }); await loadConversations(); await loadProfileData(); announce("对话已恢复"); } catch (error) { announce(`恢复失败：${error.message}`); }
 });
+document.querySelector("#favorite-thread-list")?.addEventListener("click", (event) => { const button = event.target.closest("[data-thread-collection-edit]"); if (!button) return; const id = button.closest("[data-thread-id]")?.dataset.threadId; openCollectionPicker("thread", id, (name) => { favoriteThreadCollections.forEach((collection) => { collection.items = (collection.items || []).filter((itemId) => itemId !== id); }); const target = favoriteThreadCollections.find((collection) => collection.name === name); if (target && !target.items.includes(id)) target.items.push(id); saveThreadCollections(); announce(`已加入「${name}」`); }); });
 
 document.querySelector("#change-password-form")?.addEventListener("submit", async (event) => {
   event.preventDefault(); const status = document.querySelector("#password-status"); status.textContent = "更新中……";
@@ -1164,7 +1184,7 @@ async function loadCurrentUser() {
   catch { authToken = ""; localStorage.removeItem("shiju_token"); resetAuthenticatedUi(); }
   updateAuthUi();
   if (currentUser) {
-    if (routeFromHash() === "home") showRoute("chat", { scroll: false });
+    if (!window.location.hash || routeFromHash() === "home") showRoute("chat", { scroll: false });
     await loadConversations({ restore: true }); await loadProfileData();
     try { const notices = await apiFetch("/v1/forum/notifications?limit=5"); await renderDrawerNotifications(notices); } catch { /* forum notification store may not exist on an older database */ }
     if (routeFromHash() === "admin") await loadAdminData();
@@ -1218,6 +1238,48 @@ function appendMessage(text, role, state = "") {
   chatThread.append(article);
   chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
   return article;
+}
+
+const toolDisplayNames = {
+  list_rhyme_books: "列出韵书",
+  lookup_rhyme: "查询韵部",
+  get_rhyme_part: "查询韵部详情",
+  list_ci_meters: "列出词牌",
+  get_ci_meter: "查询词牌格律",
+  list_supported_forms: "查询支持的体裁",
+  prepare_generation: "准备创作方案",
+  prepare_rewrite: "准备改写方案",
+  submit_generation: "提交生成任务",
+  submit_rewrite: "提交改写任务",
+  get_poetry_job: "查询生成进度",
+};
+
+function toolDisplayName(name) {
+  return toolDisplayNames[name] || String(name || "未知工具").replaceAll("_", " ");
+}
+
+function updateToolActivity(article, toolCallId, name, state, output = null) {
+  if (!article) return;
+  let activity = article.querySelector(".tool-activity");
+  if (!activity) {
+    activity = document.createElement("div");
+    activity.className = "tool-activity";
+    activity.setAttribute("aria-live", "polite");
+    activity.setAttribute("aria-label", "工具调用状态");
+    article.querySelector(".message-content")?.append(activity);
+  }
+  const id = String(toolCallId || name || "unknown").replace(/[^A-Za-z0-9_-]/g, "_");
+  let item = activity.querySelector(`[data-tool-call-id="${CSS.escape(id)}"]`);
+  if (!item) {
+    item = document.createElement("div");
+    item.className = "tool-activity__item";
+    item.dataset.toolCallId = id;
+    activity.append(item);
+  }
+  item.className = `tool-activity__item tool-activity__item--${state}`;
+  const marker = state === "running" ? "正在调用" : state === "completed" ? "已完成" : "调用失败";
+  item.textContent = `${marker}：${toolDisplayName(name)}`;
+  if (state === "failed" && output?.error) item.title = String(output.error);
 }
 
 function filterConversations() {
@@ -1686,9 +1748,16 @@ chatForm.addEventListener("submit", async (event) => {
             }
           }
           if (event === "assistant.delta") { reply += data.text || ""; replaceMessage(waitingMessage, reply); }
-          if (event === "tool.started") { agentStatus.textContent = `正在使用工具：${data.name || "处理中"}`; agentStatus.classList.add("is-working"); }
+          if (event === "tool.started") {
+            updateToolActivity(waitingMessage, data.tool_call_id, data.name, "running");
+            agentStatus.textContent = `正在使用工具：${toolDisplayName(data.name)}`;
+            agentStatus.classList.add("is-working");
+          }
           if (event === "tool.completed") {
-            agentStatus.textContent = "工具结果已返回"; agentStatus.classList.remove("is-working");
+            const completed = data.output?.ok === false ? "failed" : "completed";
+            updateToolActivity(waitingMessage, data.tool_call_id, data.name, completed, data.output);
+            agentStatus.textContent = completed === "failed" ? "工具调用失败，正在处理" : "工具结果已返回";
+            agentStatus.classList.remove("is-working");
             if ((data.name === "prepare_generation" || data.name === "prepare_rewrite") && data.output?.ok) {
               appendProposalEditor(data.output.result);
             }
@@ -2225,8 +2294,8 @@ async function loadThreadPage() {
     (thread.poems || []).forEach((poem) => body.append(createPoemHandscroll(poem, { shareable: false, showTime: true })));
     const markdown = document.createElement("div"); markdown.className = "thread-post-copy"; markdown.innerHTML = renderForumMarkdown(thread.content); body.append(markdown, forumReactionButtons("threads", id, thread));
     const controls = document.createElement("div"); controls.className = "thread-page-actions";
-    const follow = document.createElement("button"); follow.type = "button"; follow.className = "quiet-button"; follow.textContent = thread.following ? "取消关注" : "关注主题";
-    follow.addEventListener("click", async () => { if (!requireLogin()) return; await apiFetch(`/v1/forum/threads/${id}/follow`, { method: thread.following ? "DELETE" : "POST" }); thread.following = !thread.following; follow.textContent = thread.following ? "取消关注" : "关注主题"; }); controls.append(follow);
+    const follow = document.createElement("button"); follow.type = "button"; follow.className = "quiet-button"; follow.textContent = thread.following ? "取消收藏主题" : "收藏主题";
+    follow.addEventListener("click", async () => { if (!requireLogin()) return; const exists = favoriteThreads.some((x) => x.id === id); if (exists) { favoriteThreads = favoriteThreads.filter((x) => x.id !== id); favoriteThreadCollections.forEach((collection) => { collection.items = (collection.items || []).filter((itemId) => itemId !== id); }); } else { favoriteThreads.unshift({ id, title: thread.title, created_at: thread.created_at }); const fallback = ensureDefaultThreadCollection(); if (!fallback.items.includes(id)) fallback.items.push(id); } saveFavoriteThreads(); saveThreadCollections(); follow.textContent = exists ? "收藏主题" : "取消收藏"; announce(exists ? "已取消收藏" : "已加入默认合集，点击修改合集"); }); controls.append(follow);
     if (currentUser?.id === thread.author.id) { const remove = document.createElement("button"); remove.type = "button"; remove.className = "quiet-button quiet-button--danger"; remove.textContent = "删除主题"; remove.addEventListener("click", async () => { if (!window.confirm("删除这个主题及其讨论？")) return; await apiFetch(`/v1/forum/threads/${id}`, { method: "DELETE" }); window.location.hash = "forum"; announce("主题已删除"); }); controls.append(remove); }
 
     const replyHeading = document.createElement("h2"); replyHeading.className = "thread-detail__replies-heading"; replyHeading.textContent = `讨论（${replies.total || 0}）`;

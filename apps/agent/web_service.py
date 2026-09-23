@@ -134,6 +134,69 @@ class _WebSession:
     agent: AgentSession
     lock: threading.Lock
     last_used_at: float
+    model: str | None = None
+
+
+DEEPSEEK_V4_FLASH = "deepseek-v4-flash"
+DEEPSEEK_V4_FLASH_UPSTREAM = "deepseek-v4-flash-nv-cc"
+
+
+class _FallbackChatModel:
+    """先调用首选端点；只有尚未产出流内容时才切换到网关。"""
+
+    def __init__(self, primary: ChatModel, fallback: ChatModel | None):
+        self._primary = primary
+        self._fallback = fallback
+
+    def complete(self, messages, tools):
+        try:
+            return self._primary.complete(messages, tools)
+        except Exception:
+            if self._fallback is None:
+                raise
+            return self._fallback.complete(messages, tools)
+
+    def stream(self, messages, tools):
+        def generate():
+            emitted = False
+            try:
+                for event in self._primary.stream(messages, tools):
+                    emitted = True
+                    yield event
+                return
+            except Exception:
+                if emitted or self._fallback is None:
+                    raise
+            yield from self._fallback.stream(messages, tools)
+
+        return generate()
+
+
+class _FrontendModelRouter:
+    """将前端展示模型名映射为上游名，并为 v4 提供默认端点优先策略。"""
+
+    def __init__(
+        self,
+        default_model: ChatModel,
+        default_v4: ChatModel | None,
+        gateway: ModelGateway | None,
+        default_factory: Callable[[str], ChatModel] | None = None,
+    ):
+        self._default_model = default_model
+        self._default_v4 = default_v4
+        self._gateway = gateway
+        self._default_factory = default_factory
+
+    def for_model(self, model: str | None):
+        if model in {DEEPSEEK_V4_FLASH, DEEPSEEK_V4_FLASH_UPSTREAM}:
+            fallback = self._gateway.for_model(DEEPSEEK_V4_FLASH_UPSTREAM) if self._gateway else None
+            if self._default_v4 is not None:
+                return _FallbackChatModel(self._default_v4, fallback)
+            if fallback is not None:
+                return fallback
+        if self._default_factory is not None and model:
+            return self._default_factory(model)
+        return self._default_model.for_model(model) if hasattr(self._default_model, "for_model") else self._default_model
 
 
 class WebAgentService:
@@ -163,15 +226,35 @@ class WebAgentService:
     @classmethod
     def from_env(cls, repository, gpu_provider, project_root: str | Path):
         settings = AgentSettings.from_env()
+        gateway = None
+        default_factory = None
         if settings.gateway_config_path:
-            model = ModelGateway.from_toml(settings.gateway_config_path, max_attempts=settings.gateway_max_attempts)
+            gateway = ModelGateway.from_toml(settings.gateway_config_path, max_attempts=settings.gateway_max_attempts)
+            model = gateway
         else:
-            model = ModelGateway.single(
+            # 未配置模型网关时，Web 服务直接调用默认兼容端点，避免把
+            # 单端点故障包装成“模型网关无可用端点”。
+            model = OpenAICompatibleChatModel(
                 base_url=settings.llm_base_url,
                 api_key=settings.llm_api_key,
                 model=settings.llm_model,
                 timeout_seconds=settings.request_timeout_seconds,
             )
+            default_factory = lambda selected_model: OpenAICompatibleChatModel(
+                base_url=settings.llm_base_url,
+                api_key=settings.llm_api_key,
+                model=selected_model,
+                timeout_seconds=settings.request_timeout_seconds,
+            )
+        default_v4 = None
+        if settings.llm_base_url and settings.llm_api_key:
+            default_v4 = OpenAICompatibleChatModel(
+                base_url=settings.llm_base_url,
+                api_key=settings.llm_api_key,
+                model=DEEPSEEK_V4_FLASH_UPSTREAM,
+                timeout_seconds=settings.request_timeout_seconds,
+            )
+        model = _FrontendModelRouter(model, default_v4, gateway, default_factory)
         jobs = RepositoryPoetryJobs(repository, gpu_provider)
         return cls(
             model,
@@ -205,6 +288,23 @@ class WebAgentService:
             result["jobs"] = submitted
             result["job_id"] = submitted[-1]["job_id"]
         return result
+
+    def generate_conversation_title(self, message: str) -> str:
+        """用固定的轻量模型为新会话生成一次短标题。"""
+        fallback = " ".join(str(message or "").split())[:15] or "新建对话"
+        model = self._model.for_model("deepseek-v3.2-guiji-cc") if hasattr(self._model, "for_model") else self._model
+        try:
+            result = model.complete(
+                [
+                    {"role": "system", "content": "你负责给 AI 对话生成标题。只输出一个简洁中文标题，不要引号、标点、解释，最多 15 个汉字。"},
+                    {"role": "user", "content": str(message or "")[:2000]},
+                ],
+                [],
+            )
+            title = " ".join(str(result.get("content") or "").split()).strip(" \"'“”‘’：:。.!！?？")
+            return title[:15] or fallback
+        except Exception:
+            return fallback
 
     def respond_stream(
         self,
@@ -256,10 +356,26 @@ class WebAgentService:
                     ),
                     lock=threading.Lock(),
                     last_used_at=now,
+                    model=model,
                 )
                 if history:
                     entry.agent.load_history(history)
                 self._sessions[active_id] = entry
+            elif model != entry.model:
+                # 模型选择器对同一会话也应立即生效，同时保留已有对话上下文。
+                jobs = (
+                    self._jobs.bind(user_id, conversation_id)
+                    if hasattr(self._jobs, "bind")
+                    else self._jobs
+                )
+                previous_messages = list(entry.agent.messages)
+                entry.agent = AgentSession(
+                    self._model.for_model(model) if hasattr(self._model, "for_model") else self._model,
+                    AgentToolbox(self._project_root, jobs),
+                    max_tool_rounds=self._max_tool_rounds,
+                )
+                entry.agent.load_history(previous_messages)
+                entry.model = model
         return active_id, entry
 
     def _remove_expired(self, now: float) -> None:

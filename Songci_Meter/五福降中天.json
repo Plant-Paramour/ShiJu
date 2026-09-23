@@ -1,0 +1,53 @@
+{
+  "name": "五福降中天",
+  "aliases": [],
+  "description": "调见《花草粹编》，一作《五福降中天慢》。",
+  "default_variant": "江致和",
+  "default_variant_source_id": 1318,
+  "variants": [
+    {
+      "name": "江致和",
+      "source_id": 1318,
+      "length_category": "medium",
+      "variants_description": "此词采自《花草粹编》，亦无他首宋词可校。",
+      "rhyme_type": "平韵",
+      "number_of_stanzas": 2,
+      "stanza1": {
+        "rhyme_1_positions": [
+          2,
+          4,
+          6,
+          8
+        ],
+        "lines": [
+          "仄平平平仄",
+          "仄仄仄仄平平",
+          "平仄仄平平",
+          "仄仄平平",
+          "平仄平平仄仄",
+          "仄仄平平仄平",
+          "仄仄平平",
+          "仄平仄仄仄平平"
+        ]
+      },
+      "stanza2": {
+        "rhyme_1_positions": [
+          2,
+          4,
+          6,
+          8
+        ],
+        "lines": [
+          "平平仄仄",
+          "仄仄仄、平平仄平",
+          "仄仄仄平平仄",
+          "仄仄平平",
+          "平平仄仄",
+          "仄仄仄平平仄平",
+          "仄仄平平",
+          "仄平平仄仄平平"
+        ]
+      }
+    }
+  ]
+}

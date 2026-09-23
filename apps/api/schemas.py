@@ -33,6 +33,8 @@ class AgentProposalSubmitModel(BaseModel):
     meter_type: str
     form_name: str
     rhyme_dict_name: str = "Xinyun"
+    rhyme_mode: str | None = None
+    rhyme_parts: dict[str, str] | None = None
     strict_polyphonic: bool = True
     num_lines: int | None = Field(default=None, ge=4, le=128)
     task_options: dict[str, Any] = Field(default_factory=dict)
@@ -146,14 +148,14 @@ class AdminUserCreateModel(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=8, max_length=128)
     display_name: str | None = Field(default=None, max_length=80)
-    role: str = Field(default="user", pattern="^(user|admin)$")
+    role: str = Field(default="user", pattern="^(user|admin|developer)$")
 
 
 class AdminUserPatchModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
     display_name: str | None = Field(default=None, max_length=80)
     bio: str | None = Field(default=None, max_length=500)
-    role: str | None = Field(default=None, pattern="^(user|admin)$")
+    role: str | None = Field(default=None, pattern="^(user|admin|developer)$")
 
 
 class ForumSectionModel(BaseModel):
@@ -237,6 +239,8 @@ class GenerateJobModel(BaseModel):
     form_name: str
     theme: str
     rhyme_dict_name: str = "Xinyun"
+    rhyme_mode: str = "auto"
+    rhyme_parts: dict[str, str] = Field(default_factory=dict)
     requirement: str = ""
     task_type: str = "instruction"
     use_thinking: bool = False
@@ -256,6 +260,8 @@ class RewriteJobModel(BaseModel):
     meter_type: str
     form_name: str
     rhyme_dict_name: str = "Xinyun"
+    rhyme_mode: str = "auto"
+    rhyme_parts: dict[str, str] = Field(default_factory=dict)
     requirement: str = ""
     theme: str = "局部改写"
     num_lines: int | None = None

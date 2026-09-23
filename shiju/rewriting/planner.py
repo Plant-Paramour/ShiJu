@@ -41,7 +41,10 @@ class RewritePlan:
             for index, line in enumerate(poem.lines)
             if index not in target_indices
         }
-        session = runtime.profile.create_session()
+        session = runtime.profile.create_session(
+            rhyme_mode=runtime.rhyme_mode,
+            rhyme_parts=runtime.rhyme_parts,
+        )
         session.prime_fixed_lines(
             fixed_lines,
             strict_polyphonic=request.strict_polyphonic,
@@ -55,7 +58,10 @@ class RewritePlan:
         )
 
     def create_controller(self) -> RewriteController:
-        session = self.runtime.profile.create_session()
+        session = self.runtime.profile.create_session(
+            rhyme_mode=self.runtime.rhyme_mode,
+            rhyme_parts=self.runtime.rhyme_parts,
+        )
         session.prime_fixed_lines(
             self.fixed_lines,
             strict_polyphonic=self.request.strict_polyphonic,
