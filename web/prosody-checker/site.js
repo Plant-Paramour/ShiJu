@@ -212,7 +212,7 @@ async function logout() {
   try { await apiFetch("/v1/auth/logout", { method: "POST" }); } catch { /* local token is still cleared */ }
   clearJobProgressPolls();
   clearConversationRefresh();
-  authToken = ""; currentUser = null; currentConversationId = null; chatSessionId = null; profilePoems = []; profileCollections = [];
+  authToken = ""; currentUser = null; currentConversationId = null; chatSessionId = null; setChatTitle(); profilePoems = []; profileCollections = [];
   localStorage.removeItem("shiju_token"); resetAuthenticatedUi(); updateAuthUi(); window.location.hash = "home"; announce("已退出登录。");
   buttons.forEach((button) => { button.disabled = false; });
 }
@@ -330,7 +330,18 @@ const chatWelcome = document.querySelector("#chat-welcome");
 const chatLayout = document.querySelector(".chat-layout");
 const conversationSearch = document.querySelector("#conversation-search");
 const conversationSearchInput = document.querySelector("#conversation-search-input");
+const chatTitle = document.querySelector("#chat-title");
+const conversationTitleMaxLength = 15;
 const poemScrollContentMaxWidth = 684;
+function shortenConversationTitle(title = "新建对话") {
+  return Array.from(String(title || "新建对话").replace(/\s+/g, " ").trim() || "新建对话").slice(0, conversationTitleMaxLength).join("");
+}
+function setChatTitle(title = "新建对话") {
+  const value = shortenConversationTitle(title);
+  if (!chatTitle) return;
+  chatTitle.textContent = value;
+  chatTitle.title = value;
+}
 function syncChatContentWidth() {
   if (!chatThreadScroll || !chatLayout) return;
   const available = chatThreadScroll.clientWidth;
@@ -366,12 +377,15 @@ async function loadConversations({ restore = false } = {}) {
     const heading = document.createElement("p"); heading.textContent = "历史对话"; list.append(heading);
     payload.items.forEach((item) => {
       const row = document.createElement("div"); row.className = "conversation-row";
-      const button = document.createElement("button"); button.type = "button"; button.textContent = item.title || "新建对话"; button.dataset.conversationId = item.id;
+      const displayTitle = shortenConversationTitle(item.title);
+      const button = document.createElement("button"); button.type = "button"; button.textContent = displayTitle; button.dataset.conversationId = item.id;
       if (item.id === currentConversationId) button.setAttribute("aria-current", "true");
-      const rename = document.createElement("button"); rename.type = "button"; rename.className = "conversation-rename"; rename.dataset.renameConversation = item.id; rename.title = "修改对话名称"; rename.setAttribute("aria-label", `修改对话名称：${item.title || "新建对话"}`); rename.textContent = "改名";
-      const archive = document.createElement("button"); archive.type = "button"; archive.className = "conversation-archive"; archive.dataset.archiveConversation = item.id; archive.title = "归档对话"; archive.setAttribute("aria-label", `归档对话：${item.title || "新建对话"}`); archive.textContent = "归档";
+      const rename = document.createElement("button"); rename.type = "button"; rename.className = "conversation-rename"; rename.dataset.renameConversation = item.id; rename.title = "修改对话名称"; rename.setAttribute("aria-label", `修改对话名称：${displayTitle}`); rename.textContent = "改名";
+      const archive = document.createElement("button"); archive.type = "button"; archive.className = "conversation-archive"; archive.dataset.archiveConversation = item.id; archive.title = "归档对话"; archive.setAttribute("aria-label", `归档对话：${displayTitle}`); archive.textContent = "归档";
       row.append(button, rename, archive); list.append(row);
     });
+    const activeConversation = payload.items.find((item) => item.id === currentConversationId);
+    if (activeConversation) setChatTitle(activeConversation.title);
     if (restore) {
       const savedId = localStorage.getItem(`shiju_conversation_${currentUser.id}`);
       const target = payload.items.find((item) => item.id === savedId) || payload.items[0];
@@ -390,6 +404,7 @@ async function openConversation(conversationId) {
   if (activeConversationEvents) activeConversationEvents.abort();
   clearConversationRefresh();
   currentConversationId = payload.id; chatSessionId = payload.id;
+  setChatTitle(payload.title);
   localStorage.setItem(`shiju_conversation_${currentUser.id}`, payload.id);
   chatThread.innerHTML = "";
   payload.messages.forEach(appendPersistedMessage);
@@ -979,6 +994,8 @@ function resetAuthenticatedUi() {
   chatThread.innerHTML = initialThreadMarkup;
   chatInput.value = "";
   chatLayout.classList.remove("is-sidebar-collapsed");
+  document.querySelector("#chat-sidebar-toggle")?.setAttribute("aria-expanded", "true");
+  document.querySelector("#chat-sidebar-reopen")?.setAttribute("aria-expanded", "false");
   conversationSearch.hidden = true;
   conversationSearchInput.value = "";
   document.querySelector("#conversation-list").innerHTML = "<p>登录后查看历史对话</p>";
@@ -1559,10 +1576,14 @@ document.querySelector("#conversation-search-toggle")?.addEventListener("click",
 conversationSearchInput?.addEventListener("input", filterConversations);
 document.querySelector("#chat-sidebar-toggle")?.addEventListener("click", () => {
   chatLayout.classList.add("is-sidebar-collapsed");
+  document.querySelector("#chat-sidebar-toggle").setAttribute("aria-expanded", "false");
+  document.querySelector("#chat-sidebar-reopen").setAttribute("aria-expanded", "true");
   document.querySelector("#chat-sidebar-reopen").focus();
 });
 document.querySelector("#chat-sidebar-reopen")?.addEventListener("click", () => {
   chatLayout.classList.remove("is-sidebar-collapsed");
+  document.querySelector("#chat-sidebar-toggle").setAttribute("aria-expanded", "true");
+  document.querySelector("#chat-sidebar-reopen").setAttribute("aria-expanded", "false");
   document.querySelector("#chat-sidebar-toggle").focus();
 });
 
@@ -1575,6 +1596,7 @@ document.querySelector("#new-chat").addEventListener("click", () => {
   activeChatRequest = null;
   chatSessionId = null;
   currentConversationId = null;
+  setChatTitle();
   closeProsodyInspector();
   localStorage.removeItem(`shiju_conversation_${currentUser.id}`);
   setChatBusy(false);
@@ -1597,7 +1619,7 @@ function beginConversationRename(row, conversationId) {
   const input = document.createElement("input");
   input.className = "conversation-rename-input";
   input.value = currentTitle;
-  input.maxLength = 120;
+  input.maxLength = conversationTitleMaxLength;
   input.setAttribute("aria-label", "新的对话名称");
   const save = document.createElement("button");
   save.type = "button"; save.className = "conversation-rename-save"; save.dataset.saveConversation = conversationId; save.textContent = "保存";
@@ -1636,6 +1658,7 @@ async function saveConversationRename(row, conversationId) {
     titleButton.textContent = updated.title || title;
     titleButton.setAttribute("aria-label", `打开对话：${updated.title || title}`);
     row.querySelector("[data-rename-conversation]")?.setAttribute("aria-label", `修改对话名称：${updated.title || title}`);
+    if (conversationId === currentConversationId) setChatTitle(updated.title || title);
     cancelConversationRename(row);
     announce("对话名称已更新。");
   } catch (error) {
@@ -2205,7 +2228,7 @@ let pendingArchiveId = null;
 document.querySelector("#archive-dialog").addEventListener("close", async (event) => {
   if (event.target.returnValue !== "confirm" || !pendingArchiveId) { pendingArchiveId = null; return; }
   const id = pendingArchiveId; pendingArchiveId = null;
-  try { await apiFetch(`/v1/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }); if (currentConversationId === id) { currentConversationId = null; chatSessionId = null; chatThread.innerHTML = initialThreadMarkup; } await loadConversations(); await loadProfileData(); announce("对话已归档"); } catch (error) { announce(`归档失败：${error.message}`); }
+  try { await apiFetch(`/v1/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }); if (currentConversationId === id) { currentConversationId = null; chatSessionId = null; setChatTitle(); chatThread.innerHTML = initialThreadMarkup; } await loadConversations(); await loadProfileData(); announce("对话已归档"); } catch (error) { announce(`归档失败：${error.message}`); }
 });
 
 function renderUserRows(container, users, following = false) {

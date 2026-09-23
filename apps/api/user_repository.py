@@ -143,9 +143,9 @@ class UserRepository:
         with self.database.connect() as connection:
             connection.execute(
                 "INSERT INTO conversations(id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                (conversation_id, user_id, title[:120] or "新建对话", now, now),
+                (conversation_id, user_id, title[:15] or "新建对话", now, now),
             )
-        return {"id": conversation_id, "title": title[:120] or "新建对话", "created_at": now, "updated_at": now}
+        return {"id": conversation_id, "title": title[:15] or "新建对话", "created_at": now, "updated_at": now}
 
     def get_conversation(self, conversation_id: str, user_id: str) -> dict[str, Any] | None:
         with self.database.connect() as connection:
@@ -175,7 +175,7 @@ class UserRepository:
             if inserted.rowcount != 1:
                 raise ValueError("conversation not found")
             connection.execute(
-                "UPDATE conversations SET updated_at = ?, title = CASE WHEN title = '新建对话' AND ? = 'user' THEN substr(?, 1, 80) ELSE title END WHERE id = ? AND user_id = ?",
+                "UPDATE conversations SET updated_at = ?, title = CASE WHEN title = '新建对话' AND ? = 'user' THEN substr(?, 1, 15) ELSE title END WHERE id = ? AND user_id = ?",
                 (now, role, content, conversation_id, user_id),
             )
         return {
@@ -309,7 +309,7 @@ class UserRepository:
 
     def rename_conversation(self, conversation_id: str, user_id: str, title: str) -> bool:
         with self.database.connect() as connection:
-            result = connection.execute("UPDATE conversations SET title=?, updated_at=? WHERE id=? AND user_id=?", (title[:120] or "新建对话", time.time(), conversation_id, user_id))
+            result = connection.execute("UPDATE conversations SET title=?, updated_at=? WHERE id=? AND user_id=?", (title[:15] or "新建对话", time.time(), conversation_id, user_id))
         return result.rowcount == 1
 
     def move_conversation(self, conversation_id: str, user_id: str, folder_id: str | None) -> bool:

@@ -6,7 +6,7 @@
   <meta name="description" content="诗矩：面向中文诗词创作、对话与格律检查的前端原型。">
   <title>诗矩 · 中文诗词创作空间</title>
   <link rel="stylesheet" href="./han/han-scoped.css">
-  <link rel="stylesheet" href="./styles.css?v=34">
+  <link rel="stylesheet" href="./styles.css?v=35">
 </head>
 <body data-han-scope data-theme="song" data-han-intensity="1" data-han-accent-families="vermilion">
   <a class="han-skip-link" href="#main-content">跳到主要内容</a>
@@ -164,7 +164,7 @@
             <div class="chat-sidebar__identity"><span>诗矩</span><small>AI 诗词助手</small></div>
             <div class="chat-sidebar__tools">
               <button class="chat-sidebar__tool" type="button" id="conversation-search-toggle" aria-label="搜索历史对话" title="搜索历史对话">⌕</button>
-              <button class="chat-sidebar__tool" type="button" id="chat-sidebar-toggle" aria-label="收起历史对话栏" title="收起历史对话栏">‹</button>
+              <button class="chat-sidebar__tool" type="button" id="chat-sidebar-toggle" aria-label="收起历史对话栏" aria-expanded="true" title="收起历史对话栏">‹</button>
             </div>
           </div>
           <label class="conversation-search" id="conversation-search" hidden>
@@ -180,8 +180,8 @@
 
         <div class="chat-main">
           <header class="chat-header">
-            <button class="chat-sidebar-reopen" type="button" id="chat-sidebar-reopen" aria-label="展开历史对话栏" title="展开历史对话栏">›</button>
-            <div><p class="eyebrow">AI 对话</p><h1 id="chat-title">与诗矩对谈</h1></div>
+            <button class="chat-sidebar-reopen" type="button" id="chat-sidebar-reopen" aria-label="展开历史对话栏" aria-expanded="false" title="展开历史对话栏">›</button>
+            <h1 id="chat-title" title="与诗矩对谈">与诗矩对谈</h1>
             <span class="model-label" id="agent-status" role="status">待连接</span>
           </header>
 
@@ -444,7 +444,7 @@
 
   <footer class="site-footer"><span>诗矩 · 前端框架预览</span><span>产品文案与业务流程将在后续迭代中完善</span></footer>
   <div id="site-status" class="site-status" role="status" aria-live="polite"></div>
-  <script type="module" src="./site.js?v=31"></script>
+  <script type="module" src="./site.js?v=32"></script>
   <script type="module" src="./app.js?v=7"></script>
 </body>
 </html>

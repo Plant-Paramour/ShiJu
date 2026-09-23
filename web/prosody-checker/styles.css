@@ -2929,9 +2929,21 @@ body.has-open-drawer { overflow: hidden; }
 
 @media (max-width: 360px) {
   .poem-handscroll__footer { grid-template-columns: minmax(0, 1fr) auto; }
-  .poem-handscroll__footer-actions { grid-column: 1; grid-row: 1; justify-content: flex-start; }
-  .poem-handscroll__footer > time { grid-column: 1; grid-row: 2; max-width: none; }
-  .poem-score__flags { grid-column: 2; grid-row: 1; }
+  .poem-handscroll__footer { grid-template-rows: auto auto; row-gap: 4px; padding-top: 6px; padding-bottom: 7px; }
+  .poem-handscroll__footer > time {
+    width: 100%;
+    max-width: none;
+    grid-column: 1 / -1;
+    grid-row: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .poem-handscroll__footer-actions { grid-column: 1; grid-row: 2; justify-content: flex-start; }
+  .poem-score__flags { grid-column: 2; grid-row: 2; }
+  .poem-handscroll__footer:not(:has(> time)) { grid-template-rows: auto; }
+  .poem-handscroll__footer:not(:has(> time)) .poem-handscroll__footer-actions,
+  .poem-handscroll__footer:not(:has(> time)) .poem-score__flags { grid-row: 1; }
   .avatar-crop-shell { padding: 18px; }
 }
 
@@ -3183,5 +3195,88 @@ body.has-open-drawer { overflow: hidden; }
   .profile-grid#poem-list,
   .profile-grid#favorite-list {
     width: calc(100% - 8px);
+  }
+}
+
+/* Compact conversation heading and a vertical mobile history drawer. */
+.chat-header h1 {
+  min-width: 0;
+  margin: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  font-size: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .chat-layout {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .chat-sidebar {
+    display: flex;
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 10;
+    width: min(224px, 78vw);
+    min-width: min(224px, 78vw);
+    height: 100%;
+    padding: 20px 14px 14px;
+    flex-direction: column;
+    border-right: 1px solid var(--site-line);
+    border-bottom: 0;
+    box-shadow: 10px 0 24px rgba(43, 39, 31, .08);
+  }
+
+  .chat-sidebar__heading {
+    padding: 0 4px 16px;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .chat-sidebar__heading span { font-size: 20px; }
+
+  .new-chat-button {
+    width: 100%;
+    min-height: 38px;
+  }
+
+  .conversation-list {
+    display: flex;
+    max-height: none;
+    margin-top: 18px;
+    grid-column: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .chat-main {
+    min-width: 0;
+    width: 100%;
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .chat-header {
+    min-height: 62px;
+    padding: 10px 14px;
+    gap: 8px;
+  }
+
+  .chat-header h1 { font-size: 17px; }
+
+  .chat-layout.is-sidebar-collapsed {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .chat-layout.is-sidebar-collapsed .chat-sidebar {
+    width: 0;
+    min-width: 0;
+    padding: 0;
+    box-shadow: none;
   }
 }

@@ -186,12 +186,12 @@ class ReportResolutionModel(BaseModel):
 class ConversationCreateModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(default="新建对话", max_length=120)
+    title: str = Field(default="新建对话", max_length=15)
 
 
 class ConversationPatchModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    title: str | None = Field(default=None, max_length=120)
+    title: str | None = Field(default=None, max_length=15)
     folder_id: str | None = Field(default=None, max_length=128)
     clear_folder: bool = False
 
