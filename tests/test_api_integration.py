@@ -153,6 +153,34 @@ def test_web_agent_route_and_static_site(tmp_path):
     assert "与诗矩对谈" in page.text
 
 
+def test_stream_turn_continues_after_client_disconnect(tmp_path):
+    class SlowStreamAgent:
+        def respond_stream(self, message, session_id=None, **kwargs):
+            yield {"event_type": "assistant.delta", "payload": {"text": "部分"}}
+            time.sleep(0.15)
+            yield {"event_type": "turn.completed", "payload": {"reply": "部分完成", "jobs": [], "session_id": session_id}}
+
+    settings = ApiSettings(database_path=tmp_path / "stream-recovery.db", agent_token="a", worker_token="w")
+    with TestClient(create_app(settings, agent_service=SlowStreamAgent())) as client:
+        login = client.post("/v1/auth/login", json={"username": "Test1", "password": "Test1"}).json()
+        headers = {"Authorization": f"Bearer {login['token']}"}
+        conversation = client.post("/v1/conversations", headers=headers, json={"title": "恢复测试"}).json()
+
+        with client.stream(
+            "POST",
+            "/v1/agent/chat/stream",
+            headers=headers,
+            json={"conversation_id": conversation["id"], "message": "继续生成"},
+        ) as response:
+            assert response.status_code == 200
+            assert next(response.iter_lines()).startswith("id: 1")
+
+        time.sleep(0.3)
+        messages = client.get(f"/v1/conversations/{conversation['id']}/messages", headers=headers).json()["items"]
+        assert messages[-1]["status"] == "completed"
+        assert messages[-1]["content"] == "部分完成"
+
+
 def test_web_agent_route_is_disabled_without_configuration(tmp_path):
     client = _client(tmp_path)
     response = client.post("/v1/agent/chat", json={"message": "你好"})

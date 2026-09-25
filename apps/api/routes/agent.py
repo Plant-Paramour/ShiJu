@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import queue
 import threading
 import time
 from fastapi import APIRouter, Header, HTTPException, Request, status
@@ -53,6 +54,8 @@ def submit_proposal(
             "task_options": body.task_options,
         }
     )
+    if body.theme is not None:
+        payload["theme"] = body.theme
     if body.rhyme_mode is not None:
         payload["rhyme_mode"] = body.rhyme_mode
     if body.rhyme_parts is not None:
@@ -99,88 +102,111 @@ def chat_stream(body: AgentChatModel, request: Request, authorization: str | Non
     events = EventRepository(request.app.state.jobs.database)
 
     def stream():
-        turn_id = None; user_message_id = None; assistant_message_id = None
-        reply_parts: list[str] = []
+        turn_id = None
+        user_message_id = None
+        assistant_message_id = None
+        worker_started = False
         try:
             history = None
             if user and conversation_id:
                 history = [m for m in request.app.state.users.list_messages(conversation_id, user["id"]) if m.get("status") == "completed"]
-                user_message = request.app.state.users.add_message(conversation_id, user["id"], "user", body.message)
+                user_message = request.app.state.users.add_message(
+                    conversation_id,
+                    user["id"],
+                    "user",
+                    body.message,
+                    parent_message_id=body.parent_message_id,
+                )
                 pending = request.app.state.users.add_message(conversation_id, user["id"], "assistant", "", status="pending")
                 user_message_id = user_message["id"]; assistant_message_id = pending["id"]
             turn_id = events.start_turn(user_id=user["id"] if user else None, conversation_id=conversation_id, user_message_id=user_message_id, assistant_message_id=assistant_message_id)
-            started = events.append_agent_event(turn_id, "turn.started", {"conversation_id": conversation_id})
-            yield f"id: {started['seq']}\nevent: turn.started\ndata: {json.dumps(started['payload'], ensure_ascii=False)}\n\n"
-            if hasattr(service, "respond_stream"):
-                stream_events = service.respond_stream(body.message, conversation_id or body.session_id, history=history, user_id=user["id"] if user else None, conversation_id=conversation_id, model=body.model)
-            else:
-                try:
-                    result = service.respond(body.message, conversation_id or body.session_id, history=history, user_id=user["id"] if user else None, conversation_id=conversation_id, model=body.model)
-                except TypeError:
-                    result = service.respond(body.message, conversation_id or body.session_id)
-                stream_events = iter((
-                    {"event_type": "assistant.delta", "payload": {"text": result.get("reply", "")}},
-                    *({"event_type": "job.submitted", "payload": job} for job in result.get("jobs") or []),
-                    {"event_type": "turn.completed", "payload": {"reply": result.get("reply", ""), "jobs": result.get("jobs") or []}},
-                ))
-            submitted_jobs: list[dict] = []
-            for item in stream_events:
-                event_type = item["event_type"]
-                payload = dict(item.get("payload") or {})
-                if event_type == "assistant.delta":
-                    piece = str(payload.get("text") or "")
-                    reply_parts.append(piece)
-                    if user and conversation_id and assistant_message_id:
-                        request.app.state.users.update_message(
-                            assistant_message_id,
-                            conversation_id,
-                            user["id"],
-                            content="".join(reply_parts),
-                            status="pending",
-                        )
-                elif event_type == "job.submitted":
-                    submitted_jobs.append(payload)
-                    if user and payload.get("job_id"):
-                        request.app.state.jobs.assign_context(payload["job_id"], user["id"], conversation_id)
-                elif event_type == "turn.completed":
-                    reply = str(payload.get("reply") or "".join(reply_parts))
-                    jobs = payload.get("jobs") or submitted_jobs
-                    job_id = jobs[-1].get("job_id") if jobs else None
-                    if user and conversation_id and assistant_message_id:
-                        request.app.state.users.update_message(assistant_message_id, conversation_id, user["id"], content=reply, status="completed", job_id=job_id)
-                    payload = {"job_id": job_id, "conversation_id": conversation_id, "session_id": payload.get("session_id")}
-                    event = events.append_agent_event(turn_id, event_type, payload)
-                    events.finish_turn(turn_id)
-                    yield f"id: {event['seq']}\nevent: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                    return
+            event_queue: queue.Queue[tuple[str, dict | None]] = queue.Queue()
+
+            def publish(event_type: str, payload: dict) -> None:
                 event = events.append_agent_event(turn_id, event_type, payload)
-                yield f"id: {event['seq']}\nevent: {event_type}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        except GeneratorExit:
-            # 浏览器刷新会中断 SSE；保留已收到的内容并结束 pending 状态，
-            # 这样下次打开会话时不会显示一个永久加载中的空消息。
-            if turn_id:
-                events.append_agent_event(turn_id, "turn.failed", {"error": "客户端中断流式请求"})
-                events.finish_turn(turn_id, "failed")
-            if user and conversation_id and assistant_message_id:
+                event_queue.put(("event", {"seq": event["seq"], "event_type": event_type, "payload": payload}))
+
+            def run_turn() -> None:
+                reply_parts: list[str] = []
+                submitted_jobs: list[dict] = []
                 try:
-                    request.app.state.users.update_message(
-                        assistant_message_id,
-                        conversation_id,
-                        user["id"],
-                        content="".join(reply_parts) or "生成已中断。",
-                        status="failed",
-                    )
-                except Exception:
-                    pass
-            raise
+                    publish("turn.started", {"conversation_id": conversation_id, "user_message_id": user_message_id, "assistant_message_id": assistant_message_id})
+                    if hasattr(service, "respond_stream"):
+                        stream_events = service.respond_stream(body.message, conversation_id or body.session_id, history=history, user_id=user["id"] if user else None, conversation_id=conversation_id, model=body.model)
+                    else:
+                        try:
+                            result = service.respond(body.message, conversation_id or body.session_id, history=history, user_id=user["id"] if user else None, conversation_id=conversation_id, model=body.model)
+                        except TypeError:
+                            result = service.respond(body.message, conversation_id or body.session_id)
+                        stream_events = iter((
+                            {"event_type": "assistant.delta", "payload": {"text": result.get("reply", "")}},
+                            *({"event_type": "job.submitted", "payload": job} for job in result.get("jobs") or []),
+                            {"event_type": "turn.completed", "payload": {"reply": result.get("reply", ""), "jobs": result.get("jobs") or []}},
+                        ))
+                    for item in stream_events:
+                        event_type = item["event_type"]
+                        payload = dict(item.get("payload") or {})
+                        if event_type == "assistant.delta":
+                            reply_parts.append(str(payload.get("text") or ""))
+                            if user and conversation_id and assistant_message_id:
+                                request.app.state.users.update_message(assistant_message_id, conversation_id, user["id"], content="".join(reply_parts), status="pending")
+                        elif event_type == "job.submitted":
+                            submitted_jobs.append(payload)
+                            if user and payload.get("job_id"):
+                                request.app.state.jobs.assign_context(payload["job_id"], user["id"], conversation_id)
+                        elif event_type == "tool.completed":
+                            result = payload.get("output", {}).get("result", {})
+                            proposal_id = result.get("proposal_id")
+                            if proposal_id and assistant_message_id:
+                                with request.app.state.jobs.database.connect() as connection:
+                                    connection.execute(
+                                        "UPDATE agent_proposals SET assistant_message_id=?, updated_at=? WHERE proposal_id=?",
+                                        (assistant_message_id, time.time(), proposal_id),
+                                    )
+                        elif event_type == "turn.completed":
+                            reply = str(payload.get("reply") or "".join(reply_parts))
+                            jobs = payload.get("jobs") or submitted_jobs
+                            job_id = jobs[-1].get("job_id") if jobs else None
+                            if user and conversation_id and assistant_message_id:
+                                request.app.state.users.update_message(assistant_message_id, conversation_id, user["id"], content=reply, status="completed", job_id=job_id)
+                            payload = {"job_id": job_id, "conversation_id": conversation_id, "session_id": payload.get("session_id")}
+                            publish(event_type, payload)
+                            events.finish_turn(turn_id)
+                            return
+                        publish(event_type, payload)
+                except Exception as exc:
+                    failed_payload = {"error": str(exc)}
+                    try:
+                        publish("turn.failed", failed_payload)
+                        events.finish_turn(turn_id, "failed")
+                        if user and conversation_id and assistant_message_id:
+                            partial = "".join(reply_parts)
+                            content = f"{partial}\n\n生成失败：{exc}" if partial else f"生成失败：{exc}"
+                            request.app.state.users.update_message(assistant_message_id, conversation_id, user["id"], content=content, status="failed")
+                    except Exception:
+                        pass
+                finally:
+                    event_queue.put(("done", None))
+
+            threading.Thread(target=run_turn, name=f"agent-turn-{turn_id[:8]}", daemon=True).start()
+            worker_started = True
+            while True:
+                kind, item = event_queue.get()
+                if kind == "done":
+                    return
+                yield f"id: {item['seq']}\nevent: {item['event_type']}\ndata: {json.dumps(item['payload'], ensure_ascii=False)}\n\n"
+        except GeneratorExit:
+            # SSE 客户端断开只代表订阅结束，后台轮次继续执行并持久化结果。
+            return
         except Exception as exc:
+            # 生成线程已启动时，任何订阅端异常都不能回写为失败。
+            if worker_started:
+                return
             if turn_id:
                 failed = events.append_agent_event(turn_id, "turn.failed", {"error": str(exc)}); events.finish_turn(turn_id, "failed")
                 if user and conversation_id and assistant_message_id:
                     try:
-                        partial = "".join(reply_parts)
-                        content = f"{partial}\n\n生成失败：{exc}" if partial else f"生成失败：{exc}"
-                        request.app.state.users.update_message(assistant_message_id, conversation_id, user["id"], content=content, status="failed")
+                        request.app.state.users.update_message(assistant_message_id, conversation_id, user["id"], content=f"生成失败：{exc}", status="failed")
                     except Exception: pass
                 yield f"id: {failed['seq']}\nevent: turn.failed\ndata: {json.dumps(failed['payload'], ensure_ascii=False)}\n\n"
             else:
@@ -220,7 +246,13 @@ def chat(
                 )
                 if message.get("status") == "completed"
             ]
-            user_message = request.app.state.users.add_message(conversation_id, user["id"], "user", body.message)
+            user_message = request.app.state.users.add_message(
+                conversation_id,
+                user["id"],
+                "user",
+                body.message,
+                parent_message_id=body.parent_message_id,
+            )
             pending = request.app.state.users.add_message(
                 conversation_id,
                 user["id"],

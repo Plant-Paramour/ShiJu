@@ -6,7 +6,7 @@
   <meta name="description" content="诗矩：面向中文诗词创作、对话与格律检查的前端原型。">
   <title>诗矩 · 中文诗词创作空间</title>
   <link rel="stylesheet" href="./han/han-scoped.css">
-  <link rel="stylesheet" href="./styles.css?v=37">
+  <link rel="stylesheet" href="./styles.css?v=42">
 </head>
 <body data-han-scope data-theme="song" data-han-intensity="1" data-han-accent-families="vermilion">
   <a class="han-skip-link" href="#main-content">跳到主要内容</a>
@@ -25,6 +25,7 @@
         <a href="#home" data-route-link="home" id="home-nav-link" aria-current="page">首页</a>
         <a href="#chat" data-route-link="chat">AI 对话</a>
         <a href="#prosody" data-route-link="prosody">格律检测</a>
+        <a href="#sentence-search" data-route-link="sentence-search">佳句检索</a>
         <a href="#forum" data-route-link="forum">诗友论坛</a>
         <a href="#admin" data-route-link="admin" id="admin-nav-link" hidden>管理后台</a>
       </nav>
@@ -49,6 +50,7 @@
     <nav class="drawer-menu" aria-label="功能导航">
       <a href="#chat" data-drawer-route="chat"><span class="drawer-menu__icon" aria-hidden="true">✦</span><span>AI 对话</span></a>
       <a href="#prosody" data-drawer-route="prosody"><span class="drawer-menu__icon" aria-hidden="true">律</span><span>格律检测</span></a>
+      <a href="#sentence-search" data-drawer-route="sentence-search"><span class="drawer-menu__icon" aria-hidden="true">句</span><span>佳句检索</span></a>
       <a href="#forum" data-drawer-route="forum"><span class="drawer-menu__icon" aria-hidden="true">友</span><span>诗友论坛</span></a>
     </nav>
     <div class="site-drawer__hint">在这里开始创作、校验与交流。</div>
@@ -76,6 +78,10 @@
       <button type="button" class="drawer-signout" id="drawer-login-action">登录 / 注册</button>
       <button type="button" class="drawer-signout" id="drawer-logout-action" hidden>退出登录</button>
     </footer>
+  </aside>
+  <aside class="site-drawer site-drawer--right meter-drawer" id="meter-drawer" aria-label="词牌格律详情" aria-hidden="true">
+    <header class="site-drawer__header"><div><p class="eyebrow">词牌格律</p><h2 id="meter-drawer-title">格律详情</h2></div><button class="drawer-close" type="button" data-meter-drawer-close aria-label="关闭格律详情">×</button></header>
+    <div class="meter-drawer__body" id="meter-drawer-content"></div>
   </aside>
 
   <main id="main-content" tabindex="-1">
@@ -258,7 +264,7 @@
     <section class="app-view prosody-view" data-view="prosody" aria-labelledby="prosody-title" hidden>
       <div class="tool-shell">
         <header class="tool-heading">
-          <div><p class="eyebrow">格律工具</p><h1 id="prosody-title">诗词格律检测</h1></div>
+          <div><h1 id="prosody-title">诗词格律检测</h1></div>
           <p>依据所选韵书与诗体检查结构、平仄和押韵。现有计算逻辑保持不变。</p>
         </header>
 
@@ -275,7 +281,7 @@
               </fieldset>
 
               <div class="control-grid">
-                <label class="field">
+                <div id="rhyme-book-field" class="field">
                   <span>韵书</span>
                   <select id="rhyme-book">
                     <option value="Xinyun">中华新韵</option>
@@ -283,20 +289,20 @@
                     <option value="Cilin">词林正韵</option>
                     <option value="Tongyun">中华通韵</option>
                   </select>
-                </label>
-                <fieldset class="polyphonic-switch control-polyphonic">
-                  <legend>多音字</legend>
-                  <label><input type="radio" name="polyphonic-mode" value="automatic" checked><span>自动</span></label>
-                  <label><input type="radio" name="polyphonic-mode" value="strict"><span>严格</span></label>
-                  <label><input type="radio" name="polyphonic-mode" value="permissive"><span>放行</span></label>
-                </fieldset>
-                <div class="rule-options control-rule-options">
-                  <label id="smart-form-control" class="toggle-control" title="检查时自动选择综合分最高的五言、七言、绝句、律诗或排律">
-                    <input id="smart-form" type="checkbox" checked><span class="toggle-track" aria-hidden="true"></span><span>智能选式</span>
-                  </label>
-                  <label id="aojiu-control" class="toggle-control">
-                    <input id="allow-aojiu" type="checkbox"><span class="toggle-track" aria-hidden="true"></span><span>拗救</span>
-                  </label>
+                  <fieldset id="polyphonic-control" class="polyphonic-switch control-polyphonic">
+                    <legend>多音字</legend>
+                    <label><input type="radio" name="polyphonic-mode" value="automatic" checked><span>自动</span></label>
+                    <label><input type="radio" name="polyphonic-mode" value="strict"><span>严格</span></label>
+                    <label><input type="radio" name="polyphonic-mode" value="permissive"><span>放行</span></label>
+                  </fieldset>
+                  <div class="rule-options control-rule-options">
+                    <label id="smart-form-control" class="toggle-control" title="检查时自动选择综合分最高的五言、七言、绝句、律诗或排律">
+                      <input id="smart-form" type="checkbox" checked><span class="toggle-track" aria-hidden="true"></span><span>智能选式</span>
+                    </label>
+                    <label id="aojiu-control" class="toggle-control">
+                      <input id="allow-aojiu" type="checkbox"><span class="toggle-track" aria-hidden="true"></span><span>拗救</span>
+                    </label>
+                  </div>
                 </div>
                 <div id="tang-options" class="option-group">
                   <label class="field"><span>字数</span><select id="tang-length"><option value="5">五言</option><option value="7" selected>七言</option></select></label>
@@ -338,6 +344,38 @@
             <div id="line-results" class="line-results"></div><div id="rhyme-results" class="rhyme-results"></div>
           </section>
         </div>
+      </div>
+    </section>
+
+    <section class="app-view sentence-search-view" data-view="sentence-search" aria-labelledby="sentence-search-title" hidden>
+      <div class="tool-shell sentence-search-shell">
+        <header class="tool-heading"><div><p class="eyebrow">格律工具</p><h1 id="sentence-search-title">佳句检索</h1></div><p>输入一句话，核对它的平仄；也可以从词牌数据库中寻找最合适的格律。</p></header>
+        <div class="sentence-tabs" role="tablist" aria-label="佳句检索功能"><button class="sentence-tab is-active" type="button" role="tab" aria-selected="true" data-sentence-tab="check">单句判律</button><button class="sentence-tab" type="button" role="tab" aria-selected="false" data-sentence-tab="match">词牌匹配</button></div>
+        <section class="sentence-panel" data-sentence-panel="check" aria-labelledby="single-check-title">
+          <div class="sentence-form-grid">
+            <div><h2 id="single-check-title">选择格律</h2><p class="sentence-help">唐诗、排律按常见五言或七言句式判断；宋词可精确到阙与句。</p></div>
+            <label class="field"><span>韵书</span><select id="sentence-rhyme-book"><option value="Xinyun">中华新韵</option><option value="Pinshui">平水韵</option><option value="Cilin">词林正韵</option><option value="Tongyun">中华通韵</option></select></label>
+            <label class="field"><span>诗体</span><select id="sentence-poem-type"><option value="tang">唐诗</option><option value="pailv">排律</option><option value="wuyan">五言</option><option value="qiyan">七言</option><option value="songci">宋词</option></select></label>
+            <label class="field" id="sentence-length-field"><span>字数</span><select id="sentence-length"><option value="5">五言</option><option value="7">七言</option></select></label>
+            <label class="field sentence-songci-only" hidden><span>词牌</span><select id="sentence-cipai"></select></label>
+            <label class="field sentence-songci-only" hidden><span>变体</span><select id="sentence-variant"></select></label>
+            <label class="field sentence-songci-only" hidden><span>阙</span><select id="sentence-stanza"><option value="0">上阙</option><option value="1">下阙</option></select></label>
+            <label class="field sentence-songci-only" hidden><span>第几句</span><select id="sentence-line"></select></label>
+          </div>
+          <div class="sentence-template" id="sentence-template" hidden><span>目标句式</span><strong id="sentence-pattern">—</strong><span class="sentence-template-input-label">输入</span><strong id="sentence-input-pattern">—</strong></div>
+          <label class="field sentence-input"><span>输入一句或多句</span><textarea id="sentence-text" rows="3" placeholder="例如：海内存知己，天涯若比邻"></textarea></label>
+          <div class="form-actions"><button class="primary-button" type="button" id="sentence-check-button">开始判断</button><span class="form-status" id="sentence-check-status" role="status"></span></div>
+          <div class="sentence-verdict" id="sentence-verdict" hidden></div>
+        </section>
+        <section class="sentence-panel" data-sentence-panel="match" hidden aria-labelledby="meter-match-title">
+          <div class="sentence-form-grid sentence-match-head"><div><h2 id="meter-match-title">按一句话找词牌</h2><p class="sentence-help">先生成这句话的平仄模板，再按选定规则遍历词牌和变体。</p></div><label class="field"><span>韵书</span><select id="match-rhyme-book"><option value="Xinyun">中华新韵</option><option value="Pinshui">平水韵</option><option value="Cilin">词林正韵</option><option value="Tongyun">中华通韵</option></select></label></div>
+          <label class="field sentence-input"><span>输入一句或多句</span><textarea id="match-text" rows="3" placeholder="例如：明月几时有，把酒问青天"></textarea></label>
+          <div class="match-options"><div class="priority-picker"><span class="priority-picker__label">排序优先级（拖拽排序）</span><ol id="match-priority-list" class="priority-list" aria-label="拖动调整排序优先级"><li draggable="true" data-priority="intra"><span class="priority-grip" aria-hidden="true">☷</span>句内优先</li><li draggable="true" data-priority="shape"><span class="priority-grip" aria-hidden="true">☷</span>句式匹配</li><li draggable="true" data-priority="score"><span class="priority-grip" aria-hidden="true">☷</span>匹配度</li><li draggable="true" data-priority="breaks"><span class="priority-grip" aria-hidden="true">☷</span>“读”少</li></ol></div><label class="toggle-control"><input id="match-respect-breaks" type="checkbox"><span class="toggle-track" aria-hidden="true"></span><span>计入断句分数</span></label><input id="match-exclude-breaks" type="checkbox" hidden></div>
+          <select id="match-sort" hidden aria-hidden="true"><option value="intra">句内优先</option><option value="shape">句式</option><option value="score">匹配度</option><option value="breaks">“读”少</option></select>
+          <div class="form-actions"><button class="primary-button" type="button" id="match-button">开始匹配</button><span class="form-status" id="match-status" role="status"></span></div>
+          <div class="inferred-template" id="inferred-template" hidden><span>你的句式</span><strong></strong><small>可手动多音字消歧，点击“多”可在平、仄之间切换；未消歧的“多”按通配声调处理。</small></div><input id="match-polyphonic" type="hidden" value="automatic">
+          <div class="match-results" id="match-results" hidden></div>
+        </section>
       </div>
     </section>
 
@@ -462,7 +500,8 @@
 
   <footer class="site-footer"><span>诗矩 · 前端框架预览</span><span>产品文案与业务流程将在后续迭代中完善</span></footer>
   <div id="site-status" class="site-status" role="status" aria-live="polite"></div>
-  <script type="module" src="./site.js?v=35"></script>
-  <script type="module" src="./app.js?v=9"></script>
+  <script type="module" src="./site.js?v=47"></script>
+  <script type="module" src="./app.js?v=11"></script>
+  <script type="module" src="./sentence-search.js?v=9"></script>
 </body>
 </html>

@@ -4,6 +4,7 @@ const routeTitles = {
   home: "诗矩 · 中文诗词创作空间",
   chat: "AI 对话 · 诗矩",
   prosody: "格律检测 · 诗矩",
+  "sentence-search": "佳句检索 · 诗矩",
   forum: "诗友论坛 · 诗矩",
   "forum-thread": "主题讨论 · 诗矩",
   "forum-compose": "发布话题 · 诗矩",
@@ -29,7 +30,11 @@ let authToken = localStorage.getItem("shiju_token") || "";
 let currentUser = null;
 let loginReturnHash = "#chat";
 let currentConversationId = null;
+let editingMessageId = null;
 const activeEvaluations = new Map();
+// Job snapshots can lag behind the evaluation PUT response. Keep successful
+// results locally so polling/SSE snapshots cannot schedule the same score again.
+const completedEvaluations = new Map();
 const failedEvaluations = new Set();
 const prosodyInspector = document.querySelector("#prosody-inspector");
 const prosodyInspectorBody = document.querySelector("#prosody-inspector-body");
@@ -507,9 +512,18 @@ async function openConversation(conversationId) {
   localStorage.setItem(`shiju_conversation_${currentUser.id}`, payload.id);
   chatThread.innerHTML = "";
   payload.messages.forEach(appendPersistedMessage);
+  if (payload.pending_proposal) {
+    const anchor = payload.messages.find((message) => message.id === payload.pending_proposal.assistant_message_id);
+    const anchorElement = anchor ? chatThread.querySelector(`[data-message-id="${CSS.escape(anchor.id)}"]`) : null;
+    appendProposalEditor(payload.pending_proposal, anchorElement);
+  }
   const jobs = await loadConversationJobs(payload);
   if (loadVersion !== conversationLoadVersion) return;
-  jobs.forEach((job) => startJobProgress(job.job_id, job));
+  jobs.forEach((job) => {
+    const anchor = findHistoricalJobAnchor(job, payload.messages);
+    const proposalAnchor = chatThread.querySelector(`.proposal-editor[data-job-id="${CSS.escape(job.job_id)}"]`) || chatThread.querySelector(`.proposal-editor[data-proposal-id="${CSS.escape(job.proposal_id || "")}"]`) || chatThread.querySelector(".proposal-editor");
+    startJobProgress(job.job_id, job, proposalAnchor || anchor);
+  });
   document.querySelectorAll("#conversation-list button[data-conversation-id]").forEach((button) => button.toggleAttribute("aria-current", button.dataset.conversationId === payload.id));
   agentStatus.textContent = "已连接";
   if (payload.messages.some((message) => message.status === "pending")) {
@@ -534,10 +548,12 @@ async function loadConversationJobs(conversation) {
 
 function appendPersistedMessage(message) {
   const state = message.status === "pending" ? "pending" : message.status === "failed" ? "error" : "";
-  const article = appendMessage(message.content, message.role, state);
+  const article = appendMessage(message.content, message.role, state, message);
   article.dataset.messageId = message.id;
   article.dataset.messageStatus = message.status || "completed";
-  if (message.job_id) startJobProgress(message.job_id);
+  if (message.job_id) {
+    article.dataset.jobId = message.job_id;
+  }
   else if (message.role === "assistant" && message.status === "completed" && claimsJobSubmission(message.content)) {
     appendUnverifiedJobNotice(message.id);
   }
@@ -585,7 +601,11 @@ async function refreshConversationMessages(conversationId) {
         replaceMessage(article, message.content, state);
         article.dataset.messageStatus = message.status || "completed";
       }
-      if (message.job_id) startJobProgress(message.job_id);
+      if (message.job_id) {
+        article.dataset.jobId = message.job_id;
+        const proposalAnchor = chatThread.querySelector(`.proposal-editor[data-job-id="${CSS.escape(message.job_id)}"]`) || chatThread.querySelector(".proposal-editor");
+        startJobProgress(message.job_id, null, proposalAnchor || article);
+      }
     });
     if (hasPending) scheduleConversationRefresh(conversationId);
   } catch {
@@ -610,6 +630,17 @@ function openCollectionPicker(kind, item, onDone) {
   const names = kind === "poem" ? profileCollections.map((x) => x.name) : favoriteThreadCollections.map((x) => x.name); list.replaceChildren();
   if (!names.length) list.innerHTML = '<p class="empty-state">暂无合集，请先新建。</p>';
   names.forEach((name) => { const b = document.createElement("button"); b.type = "button"; b.className = "collection-choice"; b.textContent = name; b.addEventListener("click", () => { onDone?.(name); modal.hidden = true; }); list.append(b); }); modal.hidden = false;
+}
+
+function findHistoricalJobAnchor(job, messages) {
+  const direct = chatThread.querySelector(`[data-job-id="${CSS.escape(job.job_id)}"]`);
+  if (direct) return direct;
+  const createdAt = Number(job.created_at || 0);
+  const candidates = (messages || []).filter((message) => (
+    message.role === "assistant" && (!createdAt || Number(message.created_at || 0) <= createdAt)
+  ));
+  const message = candidates[candidates.length - 1];
+  return message ? chatThread.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`) : null;
 }
 document.querySelectorAll("[data-collection-close]").forEach((el) => el.addEventListener("click", () => { document.querySelector("#collection-modal").hidden = true; document.querySelector("#collection-create-form").hidden = true; document.querySelector("#collection-modal-new").hidden = false; }));
 document.querySelector("#collection-modal-new")?.addEventListener("click", () => { document.querySelector("#collection-modal-new").hidden = true; document.querySelector("#collection-create-form").hidden = false; document.querySelector("#collection-name-input").focus(); });
@@ -966,7 +997,7 @@ async function loadPoems() {
   renderPoemList(document.querySelector("#favorite-list"), favoritePoems, "还没有收藏作品。");
   profilePoems.filter((poem) => !poem.evaluation && poem.job_id && poem.candidate_ordinal != null).forEach(async (poem) => {
     const key = `${poem.job_id}:${poem.candidate_ordinal}`;
-    if (activeEvaluations.has(key) || failedEvaluations.has(key)) return;
+    if (activeEvaluations.has(key) || completedEvaluations.has(key) || failedEvaluations.has(key)) return;
     try {
       const job = await apiFetch(`/v1/poetry/jobs/${encodeURIComponent(poem.job_id)}/state`);
       console.info("[历史作品评分] 开始补算", { id: poem.id, title: poem.title, meter_type: poem.meter_type, form_name: poem.form_name, candidate_ordinal: poem.candidate_ordinal, job_status: job.status, candidates: (job.candidates || []).map((item) => ({ ordinal: item.ordinal, status: item.status, hasContent: Boolean(item.content) })) });
@@ -1162,6 +1193,7 @@ function resetAuthenticatedUi() {
   if (activeConversationEvents) activeConversationEvents.abort();
   if (activeChatRequest) activeChatRequest.abort();
   chatBusy = false;
+  editingMessageId = null;
   chatThread.innerHTML = initialThreadMarkup;
   chatInput.value = "";
   setChatSidebarCollapsed(window.matchMedia("(max-width: 760px)").matches);
@@ -1202,7 +1234,7 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && authToken) loadCurrentUser();
 });
 
-function appendMessage(text, role, state = "") {
+function appendMessage(text, role, state = "", meta = {}) {
   const article = document.createElement("article");
   article.className = `chat-message chat-message--${role}`;
   if (state) article.classList.add(`chat-message--${state}`);
@@ -1220,24 +1252,63 @@ function appendMessage(text, role, state = "") {
   const paragraph = document.createElement("p");
   paragraph.textContent = role === "assistant" ? normalizeAssistantText(text) : text;
   content.append(paragraph);
+  let actions = null;
   if (role === "user") {
-    const actions = document.createElement("div");
+    actions = document.createElement("div");
     actions.className = "chat-message-actions";
+    const versions = Array.isArray(meta.versions) && meta.versions.length
+      ? meta.versions.map((item) => ({ content: String(item.content || ""), version_number: item.version_number }))
+      : [{ content: text, version_number: 1 }];
+    article.dataset.messageVersions = JSON.stringify(versions);
+    article.dataset.versionIndex = String(Math.max(0, versions.length - 1));
+    const copy = document.createElement("button");
+    copy.type = "button"; copy.className = "chat-message-tool"; copy.dataset.copyMessage = "true";
+    copy.title = "复制消息"; copy.setAttribute("aria-label", "复制消息"); copy.textContent = "⧉";
     const edit = document.createElement("button");
     edit.type = "button";
     edit.className = "chat-message-edit";
     edit.dataset.editMessage = "true";
     edit.title = "编辑这条消息";
     edit.setAttribute("aria-label", "编辑这条消息");
-    edit.textContent = "编辑";
-    actions.append(edit);
-    content.append(actions);
+    edit.textContent = "✎";
+    edit.classList.add("chat-message-tool");
+    actions.append(copy, edit);
+    if (versions.length > 1) {
+      const previous = document.createElement("button");
+      previous.type = "button"; previous.className = "chat-message-tool chat-message-version-prev";
+      previous.dataset.versionStep = "-1"; previous.title = "查看上一版"; previous.setAttribute("aria-label", "查看上一版"); previous.textContent = "‹";
+      const counter = document.createElement("span"); counter.className = "chat-message-version-count";
+      const next = document.createElement("button");
+      next.type = "button"; next.className = "chat-message-tool chat-message-version-next";
+      next.dataset.versionStep = "1"; next.title = "查看下一版"; next.setAttribute("aria-label", "查看下一版"); next.textContent = "›";
+      actions.append(previous, counter, next);
+    }
   }
   if (role === "assistant") article.append(avatar, content);
-  else article.append(content, avatar);
+  else {
+    const stack = document.createElement("div");
+    stack.className = "chat-message-stack";
+    stack.append(content, actions);
+    article.append(stack, avatar);
+  }
+  if (role === "user" && article.dataset.messageVersions) updateMessageVersionControls(article);
   chatThread.append(article);
   chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
   return article;
+}
+
+function updateMessageVersionControls(article) {
+  const versions = JSON.parse(article.dataset.messageVersions || "[]");
+  const index = Number(article.dataset.versionIndex || 0);
+  const version = versions[index];
+  const paragraph = article.querySelector(".message-content p");
+  if (version && paragraph) paragraph.textContent = version.content;
+  const counter = article.querySelector(".chat-message-version-count");
+  if (counter) counter.textContent = `${index + 1} / ${versions.length}`;
+  const previous = article.querySelector(".chat-message-version-prev");
+  const next = article.querySelector(".chat-message-version-next");
+  if (previous) previous.disabled = index <= 0;
+  if (next) next.disabled = index >= versions.length - 1;
 }
 
 const toolDisplayNames = {
@@ -1302,12 +1373,13 @@ function replaceMessage(article, text, state = "") {
   chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
 }
 
-function appendProposalEditor(prepared) {
+function appendProposalEditor(prepared, anchor = null) {
   if (!prepared?.proposal_id || chatThread.querySelector(`[data-proposal-id="${prepared.proposal_id}"]`)) return;
   const proposal = prepared.proposal || {};
   const panel = document.createElement("details");
   panel.className = "proposal-editor";
   panel.dataset.proposalId = prepared.proposal_id;
+  if (prepared.submitted_job_id) panel.dataset.jobId = prepared.submitted_job_id;
   panel.open = true;
 
   const summary = document.createElement("summary");
@@ -1319,7 +1391,7 @@ function appendProposalEditor(prepared) {
   meta.textContent = `${form || "诗词生成方案"}。以下是 Agent 已选择的实际生成参数，可直接修改后提交。`;
 
   const promptLabel = document.createElement("label");
-  promptLabel.textContent = "实际发送给诗词生成器的提示词";
+  promptLabel.textContent = "创作要求（可编辑）";
   const prompt = document.createElement("textarea");
   prompt.rows = 5;
   prompt.value = prepared.editable_prompt || "";
@@ -1361,11 +1433,33 @@ function appendProposalEditor(prepared) {
   formName.setAttribute("list", "poetry-form-suggestions");
   field("篇式 / 词牌", formName);
 
+  const theme = document.createElement("textarea");
+  theme.rows = 2; theme.value = proposal.theme || ""; theme.required = prepared.kind !== "rewrite";
+  field("主题", theme);
+
   const rhymeBook = document.createElement("select");
   [["Xinyun", "中华新韵"], ["Pinshui", "平水韵"], ["Cilin", "词林正韵"], ["Tongyun", "中华通韵"]].forEach(([value, label]) => {
     rhymeBook.add(new Option(label, value, false, value === (proposal.rhyme_dict_name || "Xinyun")));
   });
   field("生成韵书", rhymeBook);
+
+  const rhymeMode = document.createElement("select");
+  [["auto", "自动选韵"], ["fixed", "固定韵部"], ["random", "随机选韵"]].forEach(([value, label]) => {
+    rhymeMode.add(new Option(label, value, false, value === (proposal.rhyme_mode || "auto")));
+  });
+  field("押韵策略", rhymeMode);
+
+  const rhymeParts = document.createElement("textarea");
+  rhymeParts.rows = 2;
+  rhymeParts.value = JSON.stringify(proposal.rhyme_parts || {}, null, 2);
+  rhymeParts.placeholder = '{"1":"一东"}';
+  field("指定韵部（JSON）", rhymeParts);
+
+  const taskOptions = document.createElement("textarea");
+  taskOptions.rows = 3;
+  taskOptions.value = JSON.stringify(proposal.task_options || {}, null, 2);
+  taskOptions.placeholder = "{}";
+  field("其他创作配置（JSON）", taskOptions);
 
   const polyphonic = document.createElement("select");
   polyphonic.add(new Option("严格判定", "strict", false, proposal.strict_polyphonic !== false));
@@ -1384,11 +1478,13 @@ function appendProposalEditor(prepared) {
   const aoJiuText = document.createElement("span"); aoJiuText.textContent = "允许拗救";
   aoJiuLabel.append(allowAoJiu, aoJiuText); config.append(aoJiuLabel);
 
-  const updateConditionalFields = () => {
-    numLinesLabel.hidden = meterType.value !== "排律";
-    aoJiuLabel.hidden = !["唐诗", "排律"].includes(meterType.value);
-  };
-  meterType.addEventListener("change", updateConditionalFields);
+   const updateConditionalFields = () => {
+     numLinesLabel.hidden = meterType.value !== "排律";
+     aoJiuLabel.hidden = !["唐诗", "排律"].includes(meterType.value);
+     rhymeParts.closest("label").hidden = rhymeMode.value !== "fixed";
+   };
+   meterType.addEventListener("change", updateConditionalFields);
+   rhymeMode.addEventListener("change", updateConditionalFields);
   updateConditionalFields();
 
   const actions = document.createElement("div");
@@ -1404,7 +1500,7 @@ function appendProposalEditor(prepared) {
       state.textContent = "对话正在保存，请稍候再提交。";
       return;
     }
-    const requirement = prompt.value.trim();
+     const requirement = prompt.value.trim();
     if (!requirement || !formName.value.trim()) {
       state.textContent = "提示词和篇式不能为空。";
       return;
@@ -1412,10 +1508,27 @@ function appendProposalEditor(prepared) {
     submit.disabled = true;
     state.textContent = "正在提交本地模型……";
     try {
-      const taskOptions = { ...(proposal.task_options || {}) };
-      if (["唐诗", "排律"].includes(meterType.value)) taskOptions.allow_aojiu = allowAoJiu.checked;
-      else delete taskOptions.allow_aojiu;
-      const payload = await apiFetch(`/v1/agent/proposals/${encodeURIComponent(prepared.proposal_id)}/submit`, {
+       let selectedTaskOptions = {};
+       try {
+         selectedTaskOptions = taskOptions.value.trim() ? JSON.parse(taskOptions.value) : {};
+         if (!selectedTaskOptions || Array.isArray(selectedTaskOptions) || typeof selectedTaskOptions !== "object") throw new Error("配置必须是 JSON 对象");
+       } catch (error) {
+         state.textContent = `其他配置格式错误：${error.message}`;
+         submit.disabled = false;
+         return;
+       }
+       if (["唐诗", "排律"].includes(meterType.value)) selectedTaskOptions.allow_aojiu = allowAoJiu.checked;
+       else delete selectedTaskOptions.allow_aojiu;
+       let selectedRhymeParts = {};
+       try {
+         selectedRhymeParts = rhymeParts.value.trim() ? JSON.parse(rhymeParts.value) : {};
+         if (!selectedRhymeParts || Array.isArray(selectedRhymeParts) || typeof selectedRhymeParts !== "object") throw new Error("韵部必须是 JSON 对象");
+       } catch (error) {
+         state.textContent = `韵部格式错误：${error.message}`;
+         submit.disabled = false;
+         return;
+       }
+       const payload = await apiFetch(`/v1/agent/proposals/${encodeURIComponent(prepared.proposal_id)}/submit`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
@@ -1423,18 +1536,22 @@ function appendProposalEditor(prepared) {
           requirement,
           candidate_count: Number(count.value),
           meter_type: meterType.value,
-          form_name: formName.value.trim(),
-          rhyme_dict_name: rhymeBook.value,
+           form_name: formName.value.trim(),
+           theme: theme.value.trim(),
+           rhyme_dict_name: rhymeBook.value,
+           rhyme_mode: rhymeMode.value,
+           rhyme_parts: selectedRhymeParts,
           strict_polyphonic: polyphonic.value === "strict",
           num_lines: numLines.value ? Number(numLines.value) : null,
-          task_options: taskOptions,
+           task_options: selectedTaskOptions,
         }),
       });
       panel.querySelectorAll("textarea, input, select, button").forEach((control) => { control.disabled = true; });
       panel.classList.add("is-submitted");
+      panel.dataset.jobId = payload.job_id;
       state.textContent = "已提交，开始生成。";
       submit.textContent = "已提交";
-      startJobProgress(payload.job_id, payload);
+      startJobProgress(payload.job_id, payload, panel);
     } catch (error) {
       submit.disabled = false;
       state.textContent = `提交失败：${error.message}`;
@@ -1444,8 +1561,16 @@ function appendProposalEditor(prepared) {
   body.prepend(meta, promptLabel);
   body.append(config, actions);
   panel.append(summary, body);
-  chatThread.append(panel);
+  if (prepared.submitted_job_id) {
+    panel.classList.add("is-submitted");
+    panel.querySelectorAll("textarea, input, select, button").forEach((control) => { control.disabled = true; });
+    state.textContent = "已提交，生成进度如下。";
+    submit.textContent = "已提交";
+  }
+  if (anchor?.parentElement === chatThread) anchor.after(panel);
+  else chatThread.append(panel);
   chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
+  return panel;
 }
 
 function setChatBusy(busy) {
@@ -1539,6 +1664,10 @@ function candidateDetail(candidate, wasOpen = false) {
 async function ensureCandidateEvaluation(job, candidate, requestMeta, onComplete) {
   if (candidate.evaluation || candidate.status !== "succeeded" || !candidate.content) return;
   const key = `${job.job_id}:${candidate.ordinal}`;
+  if (completedEvaluations.has(key)) {
+    candidate.evaluation = completedEvaluations.get(key);
+    return;
+  }
   if (activeEvaluations.has(key) || failedEvaluations.has(key)) return;
   const operation = (async () => {
     try {
@@ -1550,6 +1679,7 @@ async function ensureCandidateEvaluation(job, candidate, requestMeta, onComplete
         body: JSON.stringify({ evaluation }),
       });
       candidate.evaluation = saved.evaluation;
+      completedEvaluations.set(key, saved.evaluation);
       await loadPoems();
       onComplete();
     } catch (error) {
@@ -1595,6 +1725,7 @@ function renderAvailableScrolls(container, job, requestMeta) {
       content: work.content || work.text || work.full_text || work.display_text || "",
     };
     const key = `${job.job_id}:${ordinal}`;
+    value.evaluation = value.evaluation || completedEvaluations.get(key);
     const evaluationState = value.evaluation?.evaluated_at || (activeEvaluations.has(key) ? "pending" : failedEvaluations.has(key) ? "failed" : "none");
     const existing = list.querySelector(`[data-candidate-ordinal="${ordinal}"]`);
     if (!existing || existing.dataset.evaluationState !== String(evaluationState)) {
@@ -1612,14 +1743,26 @@ function renderAvailableScrolls(container, job, requestMeta) {
   });
 }
 
-function startJobProgress(jobId, initialJob = null) {
+function startJobProgress(jobId, initialJob = null, anchor = null) {
   if (!jobId || !authToken) return;
-  if (activeJobPolls.has(jobId) || chatThread.querySelector(`[data-job-id="${jobId}"]`)) return;
+  const existing = chatThread.querySelector(`.job-progress[data-job-id="${CSS.escape(jobId)}"]`);
+  if (existing) {
+    if (anchor?.parentElement === chatThread && existing !== anchor.nextElementSibling) anchor.after(existing);
+    return;
+  }
+  if (activeJobPolls.has(jobId)) return;
   const details = document.createElement("details");
   details.className = "job-progress"; details.open = true;
   details.dataset.jobId = jobId;
   details.innerHTML = "<summary><span>诗词生成进度</span><span class=\"job-progress__count\">0 / 0</span></summary><p class=\"job-progress__status\">任务已提交，等待 Worker……</p><div class=\"job-progress__candidates\"></div><div class=\"job-progress__results\" aria-live=\"polite\"></div>";
-  chatThread.append(details); chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
+  if (anchor?.parentElement === chatThread) {
+    const proposal = anchor.nextElementSibling?.matches?.(".proposal-editor")
+      ? anchor.nextElementSibling
+      : null;
+    (proposal || anchor).after(details);
+  }
+  else chatThread.append(details);
+  chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
   const statusNode = details.querySelector(".job-progress__status");
   const resultsNode = details.querySelector(".job-progress__results");
   const countNode = details.querySelector(".job-progress__count");
@@ -1713,8 +1856,39 @@ chatForm.addEventListener("submit", async (event) => {
     chatInput.focus();
     return;
   }
+  const editedMessageId = editingMessageId;
+  let editedVersions = null;
+  if (editedMessageId) {
+    const editedArticle = chatThread.querySelector(`[data-message-id="${CSS.escape(editedMessageId)}"]`);
+    try { editedVersions = JSON.parse(editedArticle?.dataset.messageVersions || "[]"); } catch { editedVersions = []; }
+    const editedText = editedArticle?.querySelector(".message-content p")?.textContent || "";
+    if (!editedVersions.length) editedVersions = [{ content: editedText, version_number: 1 }];
+    try {
+      await apiFetch(`/v1/conversations/${encodeURIComponent(currentConversationId)}/messages/${encodeURIComponent(editedMessageId)}/edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: message }),
+      });
+    } catch (error) {
+      announce(`编辑失败：${error.message}`);
+      return;
+    }
+    const target = chatThread.querySelector(`[data-message-id="${CSS.escape(editedMessageId)}"]`);
+    if (target) {
+      let node = target;
+      while (node) {
+        const next = node.nextElementSibling;
+        node.remove();
+        node = next;
+      }
+    }
+    editingMessageId = null;
+  }
   hideChatWelcome();
-  appendMessage(message, "user");
+  const nextVersions = editedMessageId
+    ? [...(editedVersions || []), { content: message, version_number: (editedVersions?.length || 0) + 1 }]
+    : undefined;
+  const userMessageArticle = appendMessage(message, "user", "", nextVersions ? { versions: nextVersions } : {});
   chatInput.value = "";
   chatInput.style.height = "";
   const waitingMessage = appendMessage("正在斟酌……", "assistant", "pending");
@@ -1728,7 +1902,7 @@ chatForm.addEventListener("submit", async (event) => {
     const response = await fetch("/v1/agent/chat/stream", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ message, model: chatModel?.value || "deepseek-v3.2-guiji-cc", session_id: chatSessionId, conversation_id: currentConversationId }),
+      body: JSON.stringify({ message, model: chatModel?.value || "deepseek-v3.2-guiji-cc", session_id: chatSessionId, conversation_id: currentConversationId, parent_message_id: editedMessageId || null }),
       signal: requestController.signal,
     });
     if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(responseError(payload, response.status)); }
@@ -1742,6 +1916,8 @@ chatForm.addEventListener("submit", async (event) => {
           let data = {}; try { data = JSON.parse(dataLine); } catch { continue; }
           if (event === "turn.started") {
             responseConversationId = data.conversation_id || responseConversationId;
+            if (data.user_message_id) userMessageArticle.dataset.messageId = data.user_message_id;
+            if (data.assistant_message_id) waitingMessage.dataset.messageId = data.assistant_message_id;
             if (data.conversation_id && currentConversationId === requestConversationId) {
               currentConversationId = data.conversation_id;
               if (currentUser) localStorage.setItem(`shiju_conversation_${currentUser.id}`, currentConversationId);
@@ -1759,10 +1935,10 @@ chatForm.addEventListener("submit", async (event) => {
             agentStatus.textContent = completed === "failed" ? "工具调用失败，正在处理" : "工具结果已返回";
             agentStatus.classList.remove("is-working");
             if ((data.name === "prepare_generation" || data.name === "prepare_rewrite") && data.output?.ok) {
-              appendProposalEditor(data.output.result);
+               appendProposalEditor(data.output.result, waitingMessage);
             }
           }
-          if (event === "job.submitted") jobs.push(data);
+          if (event === "job.submitted") jobs.push({ ...data, _anchor: waitingMessage });
           if (event === "turn.completed") responseConversationId = data.conversation_id || responseConversationId;
           if (event === "turn.failed") throw new Error(data.error || "Agent 执行失败");
         }
@@ -1775,7 +1951,7 @@ chatForm.addEventListener("submit", async (event) => {
       if (currentConversationId && currentUser) localStorage.setItem(`shiju_conversation_${currentUser.id}`, currentConversationId);
       replaceMessage(waitingMessage, reply || "暂时无法回复。", reply ? "" : "error");
       agentStatus.textContent = "已连接"; agentStatus.classList.remove("is-working");
-      jobs.forEach((job) => startJobProgress(job.job_id, job));
+      jobs.forEach((job) => startJobProgress(job.job_id, job, job._anchor));
     }
     await loadConversations();
   } catch (error) {
@@ -1816,15 +1992,60 @@ chatInput.addEventListener("input", () => {
 });
 
 chatThread.addEventListener("click", (event) => {
+  const copy = event.target.closest("[data-copy-message]");
+  if (copy) {
+    const article = copy.closest("[data-message-id]");
+    const versions = JSON.parse(article?.dataset.messageVersions || "[]");
+    const index = Number(article?.dataset.versionIndex || 0);
+    const text = versions[index]?.content || article?.querySelector(".message-content p")?.textContent || "";
+    navigator.clipboard?.writeText(text).then(() => announce("消息已复制")).catch(() => announce("复制失败，请手动选择文本"));
+    return;
+  }
+  const versionStep = event.target.closest("[data-version-step]");
+  if (versionStep) {
+    const article = versionStep.closest("[data-message-id]");
+    if (!article) return;
+    const versions = JSON.parse(article.dataset.messageVersions || "[]");
+    const current = Number(article.dataset.versionIndex || 0);
+    const next = Math.max(0, Math.min(versions.length - 1, current + Number(versionStep.dataset.versionStep || 0)));
+    article.dataset.versionIndex = String(next);
+    updateMessageVersionControls(article);
+    return;
+  }
   const edit = event.target.closest("[data-edit-message]");
   if (edit) {
-    const paragraph = edit.closest(".message-content")?.querySelector("p");
-    if (paragraph) {
-      chatInput.value = paragraph.textContent || "";
+    const article = edit.closest("[data-message-id]");
+    const content = article?.querySelector(".message-content");
+    const paragraph = content?.querySelector("p");
+    if (!article || !content || !paragraph || article.dataset.messageStatus === "pending" || chatBusy) return;
+    editingMessageId = article.dataset.messageId || null;
+    const editor = document.createElement("textarea");
+    editor.className = "chat-message-inline-editor";
+    editor.rows = Math.max(2, Math.min(6, paragraph.textContent.split("\\n").length));
+    editor.value = paragraph.textContent || "";
+    const actions = document.createElement("div");
+    actions.className = "chat-message-inline-actions";
+    const cancel = document.createElement("button");
+    cancel.type = "button"; cancel.className = "chat-message-inline-cancel"; cancel.textContent = "取消";
+    const save = document.createElement("button");
+    save.type = "button"; save.className = "chat-message-inline-save"; save.textContent = "保存并重新生成";
+    actions.append(cancel, save);
+    paragraph.hidden = true; edit.closest(".chat-message-actions").hidden = true;
+    content.append(editor, actions);
+    cancel.addEventListener("click", () => {
+      editor.remove(); actions.remove(); paragraph.hidden = false; edit.closest(".chat-message-actions").hidden = false;
+      editingMessageId = null;
+    });
+    save.addEventListener("click", () => {
+      const value = editor.value.trim();
+      if (!value) { editor.focus(); return; }
+      chatInput.value = value;
       chatInput.dispatchEvent(new Event("input"));
-      chatInput.focus();
-      chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
-    }
+      chatForm.requestSubmit();
+    });
+    editor.focus();
+    editor.setSelectionRange(editor.value.length, editor.value.length);
+    announce("已进入消息编辑状态");
     return;
   }
   const button = event.target.closest("[data-prompt]");
@@ -1866,6 +2087,7 @@ document.querySelector("#new-chat").addEventListener("click", () => {
   activeChatRequest = null;
   chatSessionId = null;
   currentConversationId = null;
+  editingMessageId = null;
   setChatTitle();
   closeProsodyInspector();
   localStorage.removeItem(`shiju_conversation_${currentUser.id}`);

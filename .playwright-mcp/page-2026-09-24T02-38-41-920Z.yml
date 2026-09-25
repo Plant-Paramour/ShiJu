@@ -1,0 +1,86 @@
+- generic [active] [ref=f5e1]:
+  - link "跳到主要内容" [ref=f5e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=f5e3]:
+    - generic [ref=f5e4]:
+      - link "诗矩首页" [ref=f5e5] [cursor=pointer]:
+        - /url: "#home"
+        - generic [ref=f5e6]: 诗矩
+        - generic [aria-hidden] [ref=f5e7]: 矩
+      - navigation "主导航" [ref=f5e8]:
+        - link "首页" [ref=f5e9] [cursor=pointer]:
+          - /url: "#home"
+        - link "AI 对话" [ref=f5e10] [cursor=pointer]:
+          - /url: "#chat"
+        - link "格律检测" [ref=f5e11] [cursor=pointer]:
+          - /url: "#prosody"
+        - link "诗友论坛" [ref=f5e12] [cursor=pointer]:
+          - /url: "#forum"
+      - button "打开用户菜单" [ref=f5e14] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f5e15]: 诗
+  - main [ref=f5e16]:
+    - region [ref=f5e17]:
+      - generic [ref=f5e18]:
+        - generic [ref=f5e19]:
+          - heading "诗词格律检测" [level=1] [ref=f5e21]
+          - paragraph [ref=f5e22]: 依据所选韵书与诗体检查结构、平仄和押韵。现有计算逻辑保持不变。
+        - region [ref=f5e24]:
+          - heading "输入作品" [level=2] [ref=f5e25]
+          - generic [ref=f5e26]:
+            - group "体裁" [ref=f5e27]:
+              - generic [ref=f5e29]:
+                - radio "唐诗" [checked]
+                - generic [ref=f5e30] [cursor=pointer]: 唐诗
+              - generic [ref=f5e31]:
+                - radio "宋词"
+                - generic [ref=f5e32] [cursor=pointer]: 宋词
+              - generic [ref=f5e33]:
+                - radio "俳句"
+                - generic [ref=f5e34] [cursor=pointer]: 俳句
+              - generic [ref=f5e35]:
+                - radio "排律"
+                - generic [ref=f5e36] [cursor=pointer]: 排律
+            - generic [ref=f5e37]:
+              - generic [ref=f5e38]:
+                - generic [ref=f5e39]: 韵书
+                - combobox "韵书 多音字" [ref=f5e40]:
+                  - option "中华新韵" [selected]
+                  - option "平水韵"
+                  - option "词林正韵"
+                  - option "中华通韵"
+                - group "多音字" [ref=f5e41]:
+                  - generic [ref=f5e43]:
+                    - radio "自动" [checked]
+                    - generic [ref=f5e44] [cursor=pointer]: 自动
+                  - generic [ref=f5e45]:
+                    - radio "严格"
+                    - generic [ref=f5e46] [cursor=pointer]: 严格
+                  - generic [ref=f5e47]:
+                    - radio "放行"
+                    - generic [ref=f5e48] [cursor=pointer]: 放行
+              - generic [ref=f5e49]:
+                - generic "检查时自动选择综合分最高的五言、七言、绝句、律诗或排律" [ref=f5e50] [cursor=pointer]:
+                  - checkbox "智能选式" [checked]
+                  - generic [ref=f5e52]: 智能选式
+                - generic [ref=f5e53] [cursor=pointer]:
+                  - checkbox "拗救" [checked]
+                  - generic [ref=f5e55]: 拗救
+              - generic [ref=f5e56]:
+                - generic [ref=f5e57]:
+                  - generic [ref=f5e58]: 字数
+                  - combobox "字数" [ref=f5e59]:
+                    - option "五言"
+                    - option "七言" [selected]
+                - generic [ref=f5e60]:
+                  - generic [ref=f5e61]: 篇式
+                  - combobox "篇式" [ref=f5e62]:
+                    - option "绝句"
+                    - option "律诗" [selected]
+            - generic [ref=f5e63]:
+              - generic [ref=f5e64]: 诗词正文
+              - textbox "诗词正文" [ref=f5e65]:
+                - /placeholder: 请粘贴诗词正文，可使用标点或换行分句
+            - generic [ref=f5e66]:
+              - button "开始检查" [ref=f5e67] [cursor=pointer]
+              - status
+  - status

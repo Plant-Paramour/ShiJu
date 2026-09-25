@@ -132,6 +132,21 @@ class AgentToolbox:
                 self._lookup_rhyme,
             ),
             ToolSpec(
+                "check_pingze",
+                "按指定韵书判定整段内容的平仄。凡涉及一句或多句的平仄、平仄是否正确、对仗或格律核验，必须调用；不要凭模型记忆判断。遇到返回‘中’的多音字，必须结合完整句意、词性和上下文选择实际读音，不能把‘中’直接当作错误；调用时应填写 semantic_context。标准句式中的‘中’是该位置平仄皆可，也不能误判为错误。宋词查询时同时传 stanza_number（阕编号）和 sentence_number（句编号），工具会返回定位信息；词牌格式另用 get_ci_meter 查询。",
+                _object_schema(
+                    {
+                        "rhyme_book": {"type": "string", "enum": rhyme_enum},
+                        "content": {"type": "string", "description": "待判定的汉字内容，最多 64 字，可含标点和换行"},
+                        "semantic_context": {"type": "string", "description": "句意、词性和上下文，用于判断多音字实际读音；出现多音字时必填，最多 300 字"},
+                        "stanza_number": {"type": "integer", "minimum": 1, "description": "宋词阕编号，从 1 开始"},
+                        "sentence_number": {"type": "integer", "minimum": 1, "description": "宋词句编号，从 1 开始"},
+                    },
+                    ["rhyme_book", "content"],
+                ),
+                self._check_pingze,
+            ),
+            ToolSpec(
                 "get_rhyme_part",
                 "按韵部名称查询指定韵书收录的字，可限定平声或仄声。",
                 _object_schema(
@@ -195,7 +210,7 @@ class AgentToolbox:
             ),
             ToolSpec(
                 "get_poetry_job",
-                "查询已经提交的格律生成或重写任务状态与结果。",
+                "查询已经提交的格律生成或重写任务状态与结果。任务完成时必须读取 generated_poems 中的真实标题和正文；不得根据主题自行补写诗句。",
                 _object_schema({"job_id": {"type": "string"}}, ["job_id"]),
                 self._get_poetry_job,
             ),
@@ -235,6 +250,36 @@ class AgentToolbox:
             )
         return {"rhyme_book": book, "entries": entries}
 
+    def _check_pingze(self, arguments, context) -> dict:
+        content = str(arguments.get("content", "")).strip()
+        if not content:
+            raise ValueError("content 不能为空")
+        chars = [char for char in content if "\u3400" <= char <= "\u9fff"]
+        if not chars:
+            raise ValueError("content 中没有可查询的汉字")
+        if len(chars) > 64:
+            raise ValueError("单次最多查询 64 个汉字")
+        book = self._book_name(arguments.get("rhyme_book"))
+        lexicon = self._lexicon(book)
+        entries = []
+        for char in chars:
+            tones = lexicon.get_pingze(char)
+            entries.append({"char": char, "tones": tones, "found": bool(tones)})
+        return {
+            "rhyme_book": book,
+            "content": content,
+            "pingze": "".join(
+                entry["tones"][0] if len(entry["tones"]) == 1 else "中" if entry["tones"] else "?"
+                for entry in entries
+            ),
+            "entries": entries,
+            "uncertain_chars": [entry["char"] for entry in entries if len(entry["tones"]) != 1],
+            "stanza_number": arguments.get("stanza_number"),
+            "sentence_number": arguments.get("sentence_number"),
+            "semantic_context": str(arguments.get("semantic_context") or "").strip() or None,
+            "note": "返回的‘中’表示该字在此韵书中兼有平、仄，必须结合句意、词性和上下文从 entries[tones] 中选择实际读音；它不是错误。标准句式里的‘中’表示该位置平仄皆可。?表示韵书未收录。这里只判定字音，不代替词牌格律核验。",
+        }
+
     def _get_rhyme_part(self, arguments, context) -> dict:
         book = self._book_name(arguments.get("rhyme_book"))
         part = str(arguments.get("rhyme_part", "")).strip()
@@ -265,6 +310,9 @@ class AgentToolbox:
         meters = []
         for path in sorted((self._root / "Songci_Meter").glob("*.json")):
             root = json.loads(path.read_text(encoding="utf-8"))
+            # index.json is a directory-level list, not a meter definition.
+            if not isinstance(root, dict):
+                continue
             meters.append(
                 {
                     "name": root.get("name") or path.stem,
@@ -439,7 +487,35 @@ class AgentToolbox:
         job_id = str(arguments.get("job_id", "")).strip()
         if not job_id:
             raise ValueError("job_id 不能为空")
-        return self._jobs.get_job(job_id)
+        snapshot = self._jobs.get_job(job_id)
+        if not isinstance(snapshot, dict):
+            return snapshot
+        # 将异步任务的真实成稿整理成模型容易读取的稳定字段，避免模型只看到状态和 job_id。
+        candidates = list(snapshot.get("candidates") or [])
+        result = snapshot.get("result") if isinstance(snapshot.get("result"), dict) else {}
+        if not candidates:
+            candidates = list(result.get("candidates") or [])
+        generated = []
+        for index, candidate in enumerate(candidates, start=1):
+            if not isinstance(candidate, Mapping):
+                continue
+            content = str(candidate.get("content") or candidate.get("text") or "").strip()
+            if content:
+                generated.append({
+                    "ordinal": candidate.get("ordinal", index),
+                    "title": str(candidate.get("title") or "").strip(),
+                    "content": content,
+                })
+        if not generated:
+            fallback_content = result.get("full_text") or result.get("content") or result.get("text")
+            if fallback_content:
+                generated.append({"ordinal": 1, "title": "", "content": str(fallback_content).strip()})
+        snapshot["generated_poems"] = generated
+        if snapshot.get("status") == "succeeded":
+            snapshot["agent_instruction"] = (
+                "任务已完成。以上 generated_poems 是本次真实生成正文；回答时只能引用这些正文并进行散文分析，禁止自行补写诗句。"
+            )
+        return snapshot
 
     def _book_name(self, value: Any) -> str:
         name = str(value or "")

@@ -16,6 +16,9 @@ let meterCatalog = [];
 const elements = {
   workspace: document.querySelector("#workspace"),
   form: document.querySelector("#checker-form"),
+  controlGrid: document.querySelector(".control-grid"),
+  ruleOptions: document.querySelector(".rule-options"),
+  rhymeBookField: document.querySelector("#rhyme-book-field"),
   typeInputs: [...document.querySelectorAll("[name='poem-type']")],
   rhymeBook: document.querySelector("#rhyme-book"),
   tangOptions: document.querySelector("#tang-options"),
@@ -29,6 +32,7 @@ const elements = {
   cipai: document.querySelector("#cipai"),
   variant: document.querySelector("#variant"),
   polyphonicInputs: [...document.querySelectorAll("[name='polyphonic-mode']")],
+  polyphonicControl: document.querySelector("#polyphonic-control"),
   smartForm: document.querySelector("#smart-form"),
   smartFormControl: document.querySelector("#smart-form-control"),
   allowAoJiu: document.querySelector("#allow-aojiu"),
@@ -164,6 +168,15 @@ async function renderTemplate() {
 
 function updateTypeView() {
   const type = selectedType();
+  elements.form.classList.toggle("is-songci", type === "songci");
+  const desktopLayout = window.matchMedia("(min-width: 761px)").matches;
+  if (desktopLayout) {
+    elements.rhymeBookField.insertBefore(elements.polyphonicControl, elements.ruleOptions);
+  } else if (type === "songci") {
+    elements.songciOptions.append(elements.polyphonicControl);
+  } else {
+    elements.controlGrid.insertBefore(elements.polyphonicControl, elements.ruleOptions);
+  }
   elements.tangOptions.hidden = type !== "tang";
   elements.songciOptions.hidden = type !== "songci";
   elements.meterTemplate.hidden = type !== "songci";
@@ -232,12 +245,17 @@ function appendSummaryGroup(container, title, items, emptyText, className) {
 function renderDetectionSummary(result) {
   const aoJiu = result.aoJiu;
   const polyphonicDecisions = result.polyphonicDecisions ?? [];
-  const hasPolyphonic = result.lines?.some((line) =>
+  const polyphonicMode = elements.polyphonicInputs.find((input) => input.checked)?.value;
+  const hasPolyphonic = polyphonicMode === "automatic" && result.lines?.some((line) =>
     line.characters.some((character) => character.polyphonic));
+  const violations = (result.violations ?? []).map((item) =>
+    "第 " + (item.lineIndex + 1) + " 句第 " + (item.charIndex + 1)
+      + " 字“" + item.char + "”：“" + item.rule + "”，应" + item.required + "。"
+  );
   elements.detectionSummary.replaceChildren();
-  elements.detectionSummary.hidden = !aoJiu && !hasPolyphonic;
+  elements.detectionSummary.hidden = !aoJiu && !hasPolyphonic && !violations.length;
   elements.aoJiuLegend.hidden = !aoJiu?.enabled;
-  if (!aoJiu && !hasPolyphonic) return;
+  if (!aoJiu && !hasPolyphonic && !violations.length) return;
   elements.detectionSummary.classList.toggle(
     "has-two-groups",
     Boolean(aoJiu && hasPolyphonic),
@@ -273,9 +291,6 @@ function renderDetectionSummary(result) {
     });
   });
 
-  const violations = (result.violations ?? []).map((item) =>
-    "第 " + (item.lineIndex + 1) + " 句第 " + (item.charIndex + 1)
-      + " 字“" + item.char + "”：" + item.rule + "，应" + item.required + "。");
   const standard = document.createElement("div");
   standard.className = "standard-summary";
   const standardHeading = document.createElement("h4");
@@ -424,6 +439,7 @@ async function runCheck(event) {
 }
 
 elements.typeInputs.forEach((input) => input.addEventListener("change", updateTypeView));
+window.addEventListener("resize", updateTypeView);
 elements.cipai.addEventListener("change", updateVariants);
 elements.cipaiLength.addEventListener("change", async () => { renderMeterOptions(); await updateVariants(); });
 elements.cipaiSearch.addEventListener("input", async () => { renderMeterOptions(); await updateVariants(); });

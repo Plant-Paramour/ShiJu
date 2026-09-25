@@ -22,6 +22,7 @@ class AgentChatModel(BaseModel):
     session_id: str | None = Field(default=None, max_length=128)
     conversation_id: str | None = Field(default=None, max_length=128)
     model: str | None = Field(default=None, max_length=120)
+    parent_message_id: str | None = Field(default=None, max_length=128)
 
 
 class AgentProposalSubmitModel(BaseModel):
@@ -35,6 +36,7 @@ class AgentProposalSubmitModel(BaseModel):
     rhyme_dict_name: str = "Xinyun"
     rhyme_mode: str | None = None
     rhyme_parts: dict[str, str] | None = None
+    theme: str | None = None
     strict_polyphonic: bool = True
     num_lines: int | None = Field(default=None, ge=4, le=128)
     task_options: dict[str, Any] = Field(default_factory=dict)
@@ -197,6 +199,11 @@ class ConversationPatchModel(BaseModel):
     title: str | None = Field(default=None, max_length=15)
     folder_id: str | None = Field(default=None, max_length=128)
     clear_folder: bool = False
+
+
+class ConversationMessageEditModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    content: str = Field(min_length=1, max_length=12000)
 
 
 class FolderCreateModel(BaseModel):

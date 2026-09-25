@@ -47,6 +47,54 @@ def test_rhyme_and_meter_queries_use_local_data():
     assert len(meter["stanzas"]) == 2
     assert meter["stanzas"][0]["lines"][0]["pattern"] == "中仄/平平/仄仄平"
 
+def test_ci_meter_index_is_ignored_when_listing_forms():
+    toolbox = _toolbox()
+    context = ToolContext("查询支持体裁", 1)
+
+    meters = toolbox.execute("list_ci_meters", {}, context)
+    assert meters["meters"]
+    assert any(item["name"] == "浣溪沙" for item in meters["meters"])
+
+    forms = toolbox.execute("list_supported_forms", {}, context)
+    assert "宋词" in forms
+    assert "浣溪沙" in forms["宋词"]["forms"]
+
+def test_check_pingze_returns_sequence_and_songci_location():
+    toolbox = _toolbox()
+    result = toolbox.execute(
+        "check_pingze",
+        {
+            "rhyme_book": "Xinyun",
+            "content": "春山",
+            "stanza_number": 2,
+            "sentence_number": 3,
+        },
+        ToolContext("查平仄", 1),
+    )
+
+    assert result["pingze"] == "平平"
+    assert result["uncertain_chars"] == []
+    assert result["stanza_number"] == 2
+    assert result["sentence_number"] == 3
+    assert all(entry["found"] for entry in result["entries"])
+
+
+def test_check_pingze_preserves_semantic_context_for_polyphonic_reading():
+    toolbox = _toolbox()
+    result = toolbox.execute(
+        "check_pingze",
+        {
+            "rhyme_book": "Xinyun",
+            "content": "多中",
+            "semantic_context": "数量很多；表示居中的位置",
+        },
+        ToolContext("结合句意查平仄", 1),
+    )
+
+    assert result["semantic_context"] == "数量很多；表示居中的位置"
+    assert result["uncertain_chars"]
+    assert "结合句意" in result["note"]
+
 
 def test_generation_submission_waits_for_web_or_a_later_turn():
     toolbox = _toolbox()

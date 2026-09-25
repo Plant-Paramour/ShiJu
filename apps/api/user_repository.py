@@ -175,13 +175,29 @@ class UserRepository:
         *,
         status: str = "completed",
         job_id: str | None = None,
+        parent_message_id: str | None = None,
     ) -> dict[str, Any]:
         now = time.time()
         message_id = str(uuid.uuid4())
         with self.database.connect() as connection:
+            version_group_id = message_id
+            version_number = 1
+            if parent_message_id:
+                parent = connection.execute(
+                    "SELECT version_group_id, COALESCE(MAX(version_number), 1) AS version_number FROM messages WHERE id = ? AND conversation_id = ?",
+                    (parent_message_id, conversation_id),
+                ).fetchone()
+                archived = connection.execute(
+                    "SELECT version_group_id, MAX(version_number) AS version_number FROM message_versions WHERE id = ? AND conversation_id = ? GROUP BY version_group_id",
+                    (parent_message_id, conversation_id),
+                ).fetchone()
+                source = parent or archived
+                if source:
+                    version_group_id = source["version_group_id"] or parent_message_id
+                    version_number = int(source["version_number"] or 1) + 1
             inserted = connection.execute(
-                "INSERT INTO messages(id, conversation_id, role, content, created_at, status, job_id) SELECT ?, id, ?, ?, ?, ?, ? FROM conversations WHERE id = ? AND user_id = ?",
-                (message_id, role, content, now, status, job_id, conversation_id, user_id),
+                "INSERT INTO messages(id, conversation_id, role, content, created_at, status, job_id, version_group_id, version_number) SELECT ?, id, ?, ?, ?, ?, ?, ?, ? FROM conversations WHERE id = ? AND user_id = ?",
+                (message_id, role, content, now, status, job_id, version_group_id, version_number, conversation_id, user_id),
             )
             if inserted.rowcount != 1:
                 raise ValueError("conversation not found")
@@ -189,6 +205,11 @@ class UserRepository:
                 "UPDATE conversations SET updated_at = ?, title = CASE WHEN title = '新建对话' AND ? = 'user' THEN substr(?, 1, 15) ELSE title END WHERE id = ? AND user_id = ?",
                 (now, role, content, conversation_id, user_id),
             )
+            if parent_message_id:
+                connection.execute(
+                    "INSERT OR IGNORE INTO message_versions(id, conversation_id, version_group_id, version_number, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (str(uuid.uuid4()), conversation_id, version_group_id, version_number, role, content, now),
+                )
         return {
             "id": message_id,
             "role": role,
@@ -196,6 +217,8 @@ class UserRepository:
             "status": status,
             "job_id": job_id,
             "created_at": now,
+            "version_group_id": version_group_id,
+            "version_number": version_number,
         }
 
     def update_message(
@@ -227,13 +250,67 @@ class UserRepository:
                 (now, conversation_id, user_id),
             )
 
+    def truncate_messages_from(self, message_id: str, conversation_id: str, user_id: str) -> bool:
+        """Remove an edited user message and every response after it."""
+        now = time.time()
+        with self.database.connect() as connection:
+            target = connection.execute(
+                """
+                SELECT m.created_at FROM messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE m.id = ? AND m.conversation_id = ? AND c.user_id = ? AND m.role = 'user'
+                """,
+                (message_id, conversation_id, user_id),
+            ).fetchone()
+            if target is None:
+                return False
+            current = connection.execute(
+                "SELECT id, version_group_id, version_number, role, content, created_at FROM messages WHERE id = ? AND conversation_id = ?",
+                (message_id, conversation_id),
+            ).fetchone()
+            if current:
+                connection.execute(
+                    "INSERT OR IGNORE INTO message_versions(id, conversation_id, version_group_id, version_number, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (current["id"], conversation_id, current["version_group_id"] or current["id"], current["version_number"], current["role"], current["content"], current["created_at"]),
+                )
+            connection.execute(
+                """
+                DELETE FROM messages
+                WHERE conversation_id = ? AND (created_at > ? OR (created_at = ? AND id >= ?))
+                """,
+                (conversation_id, target["created_at"], target["created_at"], message_id),
+            )
+            connection.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ? AND user_id = ?",
+                (now, conversation_id, user_id),
+            )
+        return True
+
     def list_messages(self, conversation_id: str, user_id: str) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT m.id, m.role, m.content, m.status, m.job_id, m.created_at FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND c.user_id = ? ORDER BY m.created_at, m.id",
+                "SELECT m.id, m.role, m.content, m.status, m.job_id, m.created_at, m.version_group_id, m.version_number FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND c.user_id = ? ORDER BY m.created_at, m.id",
                 (conversation_id, user_id),
             ).fetchall()
-        return [dict(row) for row in rows]
+            versions = connection.execute(
+                "SELECT version_group_id, version_number, role, content, created_at FROM message_versions WHERE conversation_id = ? ORDER BY version_group_id, version_number",
+                (conversation_id,),
+            ).fetchall()
+        by_group: dict[str, list[dict[str, Any]]] = {}
+        for version in versions:
+            item = dict(version)
+            by_group.setdefault(item["version_group_id"], []).append(item)
+        result = []
+        for row in rows:
+            item = dict(row)
+            group = item.get("version_group_id") or item["id"]
+            history = list(by_group.get(group, []))
+            if not any(v["version_number"] == item.get("version_number") for v in history):
+                history.append({"version_group_id": group, "version_number": item.get("version_number", 1), "role": item["role"], "content": item["content"], "created_at": item["created_at"]})
+            history.sort(key=lambda v: v["version_number"])
+            item["versions"] = history if item["role"] == "user" else []
+            result.append(item)
+        return result
 
     def save_poem(self, user_id: str, job_id: str, job_request: dict[str, Any], result: dict[str, Any]) -> None:
         candidates = result.get("candidates") or []

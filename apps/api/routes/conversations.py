@@ -7,7 +7,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from .auth import current_user
-from ..schemas import ConversationCreateModel, ConversationPatchModel, FolderCreateModel, FolderPatchModel
+from ..schemas import ConversationCreateModel, ConversationMessageEditModel, ConversationPatchModel, FolderCreateModel, FolderPatchModel
 from ..event_repository import EventRepository
 
 router = APIRouter(prefix="/v1/conversations", tags=["conversations"])
@@ -57,7 +57,44 @@ def get_conversation(
     if conversation is None:
         raise HTTPException(status_code=404, detail="conversation not found")
     conversation["messages"] = request.app.state.users.list_messages(conversation_id, user["id"])
+    conversation["pending_proposal"] = _pending_proposal(request, conversation_id, user["id"])
     return conversation
+
+
+def _pending_proposal(request: Request, conversation_id: str, user_id: str) -> dict | None:
+    with request.app.state.jobs.database.connect() as connection:
+        row = connection.execute(
+            "SELECT proposal_id, kind, payload_json, submitted_job_id, assistant_message_id FROM agent_proposals "
+            "WHERE conversation_id=? AND user_id=?",
+            (conversation_id, user_id),
+        ).fetchone()
+    if row is None or row["submitted_job_id"]:
+        return None
+    payload = json.loads(row["payload_json"])
+    assistant_message_id = row["assistant_message_id"]
+    if not assistant_message_id:
+        with request.app.state.jobs.database.connect() as connection:
+            events = connection.execute(
+                "SELECT t.assistant_message_id, e.payload_json FROM agent_events e "
+                "JOIN agent_turns t ON t.id=e.turn_id "
+                "WHERE t.conversation_id=? AND e.event_type='tool.completed' "
+                "ORDER BY e.created_at DESC",
+                (conversation_id,),
+            ).fetchall()
+        for event in events:
+            event_payload = json.loads(event["payload_json"])
+            result = (event_payload.get("output") or {}).get("result") or {}
+            if result.get("proposal_id") == row["proposal_id"]:
+                assistant_message_id = event["assistant_message_id"]
+                break
+    return {
+        "proposal_id": row["proposal_id"],
+        "kind": row["kind"],
+        "proposal": payload,
+        "editable_prompt": payload.get("requirement", ""),
+        "candidate_count": payload.get("candidate_count", 1),
+        "assistant_message_id": assistant_message_id,
+    }
 
 
 @router.get("/{conversation_id}/messages")
@@ -80,6 +117,20 @@ def patch_conversation(conversation_id: str, body: ConversationPatchModel, reque
     if body.folder_id is not None or body.clear_folder: ok = request.app.state.users.move_conversation(conversation_id, user["id"], None if body.clear_folder else body.folder_id) and ok
     if not ok: raise HTTPException(status_code=404, detail="conversation not found")
     return request.app.state.users.get_conversation(conversation_id, user["id"])
+
+
+@router.post("/{conversation_id}/messages/{message_id}/edit")
+def edit_message(
+    conversation_id: str,
+    message_id: str,
+    body: ConversationMessageEditModel,
+    request: Request,
+    authorization: str | None = Header(default=None),
+):
+    user = current_user(request, authorization)
+    if not request.app.state.users.truncate_messages_from(message_id, conversation_id, user["id"]):
+        raise HTTPException(status_code=404, detail="user message not found")
+    return {"conversation_id": conversation_id, "message_id": message_id, "content": body.content}
 
 
 @router.delete("/{conversation_id}")
