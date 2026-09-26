@@ -134,3 +134,45 @@ class GenerationController:
 
     def candidate_context(self) -> Any:
         return self._session.candidate_context(self.snapshot())
+
+
+class FixedLineController:
+    """在指定句位置提供硬性文本前缀，同时保留底层格律状态机。"""
+
+    def __init__(self, controller: GenerationController, fixed_lines: dict[int, str]):
+        self._controller = controller
+        self._fixed_lines = dict(fixed_lines)
+
+    @property
+    def layout(self):
+        return self._controller.layout
+
+    def snapshot(self):
+        return self._controller.snapshot()
+
+    def advance(self, text: str) -> None:
+        self._controller.advance(text)
+
+    def allowed_patterns(self, max_length: int = 4):
+        return self._controller.allowed_patterns(max_length)
+
+    def remaining_before_boundary(self) -> int:
+        return self._controller.remaining_before_boundary()
+
+    def candidate_context(self) -> Any:
+        return self._controller.candidate_context()
+
+    def forced_prefix(self) -> str | None:
+        state = self.snapshot()
+        if state.is_finished or state.line_index not in self._fixed_lines:
+            return None
+        if state.step not in {StepKind.TEXT, StepKind.CAESURA}:
+            return None
+        text = self._fixed_lines[state.line_index]
+        line = self.layout.lines[state.line_index]
+        result: list[str] = []
+        for index in range(state.char_index, len(text)):
+            if index in line.caesura_positions:
+                result.append("、")
+            result.append(text[index])
+        return "".join(result)

@@ -307,6 +307,22 @@ def test_prepare_rejects_unsupported_form():
         )
 
 
+def test_partial_generation_requires_at_least_one_fixed_line():
+    toolbox = _toolbox()
+    with pytest.raises(ValueError, match="部分生成必须至少指定一句"):
+        toolbox.execute(
+            "prepare_partial_generation",
+            {
+                "meter_type": "唐诗",
+                "form_name": "七言律诗",
+                "theme": "测试",
+                "requirement": "补全其余诗句。",
+                "fixed_lines": {},
+            },
+            ToolContext("补全一首七律", 1),
+        )
+
+
 def test_confirmation_accepts_natural_phrase_but_not_modification():
     toolbox = _toolbox()
     proposal = toolbox.execute(

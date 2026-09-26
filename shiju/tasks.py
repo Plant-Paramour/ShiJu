@@ -34,7 +34,7 @@ from .prompts import (
     build_relational_prompt,
     build_template_prompt,
 )
-from .state import GenerationController, GenerationStateMachine
+from .state import FixedLineController, GenerationController, GenerationStateMachine
 from .vocab import TokenizerLike, VocabLookup
 
 
@@ -87,7 +87,7 @@ class PailvOptions:
 class TangOptions:
     """绝句与律诗的专用格律配置。"""
 
-    allow_aojiu: bool = False
+    allow_aojiu: bool = True
 
 
 @dataclass(frozen=True)
@@ -96,10 +96,11 @@ class TaskRequest:
     form_name: str
     theme: str
     rhyme_dict_name: str
+    variant_name: str | None = None
     task_type: str = "instruction"
     requirement: str = ""
     use_thinking: bool = True
-    strict_polyphonic: bool = True
+    strict_polyphonic: bool = False
     cipai_data_path: str = "PoeTone-main/data/cipai_data.json"
     num_lines: int | None = None
     hanpai: HanpaiOptions = field(default_factory=HanpaiOptions)
@@ -137,14 +138,24 @@ class TaskRuntime:
         *,
         controller: GenerationController | None = None,
         activation_marker: str = CONTENT_MARKER,
+        fixed_lines: dict[int, str] | None = None,
+        strict_polyphonic: bool | None = None,
     ) -> ConstrainedLogitsProcessor:
         if controller is None:
             session = self.profile.create_session(
                 rhyme_mode=self.rhyme_mode,
                 rhyme_parts=self.rhyme_parts,
             )
+            normalized = dict(fixed_lines or {})
+            if normalized:
+                session.prime_fixed_lines(
+                    normalized,
+                    strict_polyphonic=self.processor_config.strict_polyphonic if strict_polyphonic is None else strict_polyphonic,
+                )
             state_machine = GenerationStateMachine(self.profile.layout)
             controller = GenerationController(state_machine, session)
+            if normalized:
+                controller = FixedLineController(controller, normalized)
         return ConstrainedLogitsProcessor(
             vocab=vocab,
             controller=controller,
@@ -166,7 +177,7 @@ class TaskFactory(Protocol):
 
 class TemplateTaskFactory:
     def create(self, request: TaskRequest, context: TaskContext) -> TaskRuntime:
-        template = MeterTemplateRepository(context.meter_source).get(request.form_name)
+        template = MeterTemplateRepository(context.meter_source).get(request.form_name, request.variant_name)
         profile = TemplateConstraintProfile(template, context.lexicon)
         rhyming_lines = frozenset(
             index for index, line in enumerate(template.lines) if line.rhyme_group is not None

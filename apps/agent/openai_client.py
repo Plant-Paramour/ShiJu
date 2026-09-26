@@ -85,7 +85,7 @@ class OpenAICompatibleChatModel:
             raise ChatModelError("大模型 API 返回的 message 不是对象")
         return message
 
-    def stream(self, messages: Sequence[Mapping[str, Any]], tools: Sequence[Mapping[str, Any]]):
+    def stream(self, messages: Sequence[Mapping[str, Any]], tools: Sequence[Mapping[str, Any]], cancellation_event=None, resume_token: str | None = None):
         def generate():
             payload: dict[str, Any] = {
                 "model": self._model, "messages": list(messages), "tools": list(tools),
@@ -94,8 +94,13 @@ class OpenAICompatibleChatModel:
             emitted = False
             try:
                 stream_transport = self._stream_transport or request_sse
-                chunks = stream_transport("POST", self._url, {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}, payload, self._timeout_seconds)
-                for event in merge_openai_stream(iter_sse_lines(chunks)):
+                raw_chunks = stream_transport("POST", self._url, {"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"}, payload, self._timeout_seconds)
+                for event in merge_openai_stream(iter_sse_lines(raw_chunks)):
+                    if cancellation_event is not None and cancellation_event.is_set():
+                        close = getattr(raw_chunks, "close", None)
+                        if callable(close):
+                            close()
+                        return
                     emitted = True
                     yield event
                 return
@@ -104,9 +109,15 @@ class OpenAICompatibleChatModel:
                     raise ChatModelError(f"大模型 SSE 请求失败: {exc}", status_code=getattr(exc, "status_code", None), retry_after=getattr(exc, "retry_after", None)) from exc
             # Some compatible providers accept chat completions but reject stream=true.
             # Fall back to one normal response so the existing Agent loop remains usable.
+            if cancellation_event is not None and cancellation_event.is_set():
+                return
             message = self.complete(messages, tools)
             if message.get("content"):
                 yield {"type": "assistant.delta", "text": str(message["content"])}
             calls = list(message.get("tool_calls") or [])
             yield {"type": "turn.finished", "finish_reason": "tool_calls" if calls else "stop", "tool_calls": calls}
         return generate()
+
+    @property
+    def supports_native_resume(self) -> bool:
+        return False

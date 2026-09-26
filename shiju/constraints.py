@@ -270,7 +270,8 @@ class HanpaiConstraintProfile:
                 LineLayout(
                     length=length,
                     break_positions=self._BREAKS[length],
-                    caesura_positions=self._BREAKS[length],
+                    # 节奏切分只用于限制 token 不跨界，不生成句内顿号。
+                    caesura_positions=frozenset(),
                     stanza_index=index,
                     line_in_stanza=0,
                     stanza_end=True,

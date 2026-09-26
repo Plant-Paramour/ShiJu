@@ -102,7 +102,7 @@ def build_worker() -> GpuWorker:
         capabilities={
             "model": model_name,
             "quantization": quantization,
-            "tasks": ["generate", "rewrite"],
+            "tasks": ["generate", "partial_generate", "rewrite"],
             "concurrency": 1,
         },
         process_runner=process_runner,

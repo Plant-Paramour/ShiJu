@@ -125,6 +125,18 @@ function routeFromHash() {
   return parts[0] || "home";
 }
 
+function conversationIdFromLocation() {
+  const match = window.location.hash.match(/^#chat\/s\/([^/]+)$/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+function setConversationLocation(conversationId) {
+  const target = conversationId ? `#chat/s/${encodeURIComponent(conversationId)}` : "#chat";
+  if (window.location.hash !== target) {
+    window.history.replaceState(null, "", target);
+  }
+}
+
 navToggle.addEventListener("click", () => {
   const open = leftDrawer.classList.contains("is-open");
   if (open) closeDrawers();
@@ -188,6 +200,8 @@ document.querySelector("#drawer-logout-action")?.addEventListener("click", () =>
 window.addEventListener("hashchange", () => {
   if (window.location.hash === "#main-content") return;
   showRoute(routeFromHash(), { focus: true });
+  const conversationId = conversationIdFromLocation();
+  if (conversationId && currentUser) openConversation(conversationId).catch((error) => announce(`无法打开对话：${error.message}`));
 });
 
 document.querySelectorAll("[data-open-register]").forEach((button) => {
@@ -397,6 +411,7 @@ const chatInput = document.querySelector("#chat-input");
 const chatModel = document.querySelector("#chat-model");
 const chatAttachment = document.querySelector("#chat-attachment");
 const chatAttachmentPreview = document.querySelector("#chat-attachment-preview");
+const chatPromptButton = document.querySelector("#chat-prompt-button");
 const chatThreadScroll = document.querySelector("#chat-thread-scroll");
 const chatThread = document.querySelector("#chat-thread");
 const chatWelcome = document.querySelector("#chat-welcome");
@@ -438,9 +453,88 @@ const chatSubmit = chatForm.querySelector("button[type='submit']");
 const chatCancel = document.querySelector("#chat-cancel");
 const agentStatus = document.querySelector("#agent-status");
 const initialThreadMarkup = chatThread.innerHTML;
+function openChatPromptChooser() {
+  let dialog = document.querySelector("#chat-prompt-chooser");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.id = "chat-prompt-chooser";
+    dialog.className = "chat-prompt-chooser";
+    dialog.setAttribute("aria-labelledby", "chat-prompt-chooser-title");
+    dialog.innerHTML = `
+      <form method="dialog" class="chat-prompt-chooser__shell">
+        <header class="chat-prompt-chooser__header">
+          <div><p class="eyebrow">诗词创作</p><h2 id="chat-prompt-chooser-title">选择创作方式</h2></div>
+          <button type="submit" class="icon-button" aria-label="关闭">×</button>
+        </header>
+        <div class="chat-prompt-chooser__options">
+          <button type="button" data-prompt-mode="full"><strong>生成整首诗词</strong><span>从主题、体裁和格律开始创作一首完整作品。</span></button>
+          <button type="button" data-prompt-mode="partial"><strong>生成部分诗词</strong><span>补完残稿，或指定原诗中的句子进行改写。</span></button>
+        </div>
+      </form>`;
+    dialog.querySelectorAll("[data-prompt-mode]").forEach((button) => {
+      button.addEventListener("click", () => {
+        if (!requireLogin()) { dialog.close(); return; }
+        dialog.close();
+        openDirectGenerationEditor(button.dataset.promptMode === "partial");
+      });
+    });
+    document.body.append(dialog);
+  }
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
+}
+chatPromptButton?.addEventListener("click", openChatPromptChooser);
+
+async function openDirectGenerationEditor(isPartial) {
+  const title = isPartial ? "部分生成" : "整首创作";
+  const titlePrompt = isPartial
+    ? "用户要进行部分诗词生成，可补完或改写指定句子。"
+    : "用户要生成一首完整诗词。";
+  try {
+    const conversation = await apiFetch("/v1/conversations/auto", {
+      method: "POST",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ message: titlePrompt }),
+    });
+    currentConversationId = conversation.id;
+    chatSessionId = conversation.id;
+    setChatTitle(conversation.title || title);
+    if (currentUser) localStorage.setItem(`shiju_conversation_${currentUser.id}`, conversation.id);
+    await loadConversations();
+  } catch (error) {
+    announce(`无法创建历史对话：${error.message}`);
+    return;
+  }
+  const proposalId = `direct-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const prepared = {
+    proposal_id: proposalId,
+    direct: true,
+    kind: isPartial ? "partial_generate" : "generate",
+    editable_prompt: "",
+    candidate_count: 1,
+    proposal: {
+      meter_type: "唐诗",
+      form_name: "七言绝句",
+      theme: isPartial ? "部分生成" : "",
+      rhyme_dict_name: "Xinyun",
+      rhyme_mode: "auto",
+      rhyme_parts: {},
+      fixed_lines: {},
+      task_options: { allow_aojiu: true },
+      strict_polyphonic: false,
+    },
+  };
+  const panel = appendProposalEditor(prepared);
+  panel?.scrollIntoView({ behavior: "smooth", block: "center" });
+  panel?.querySelector("textarea")?.focus({ preventScroll: true });
+}
 let chatSessionId = null;
 let activeChatRequest = null;
 let chatBusy = false;
+let activeAssistantMessage = null;
+let activeChatStopMode = null;
+let activeTurnId = null;
+let resumeTurnId = null;
 const activeJobPolls = new Map();
 let conversationRefreshTimer = null;
 let conversationLoadVersion = 0;
@@ -472,12 +566,17 @@ chatAttachment?.addEventListener("change", () => {
 async function loadConversations({ restore = false } = {}) {
   if (!currentUser) { document.querySelector("#conversation-list").innerHTML = "<p>登录后查看历史对话</p>"; return; }
   const generation = authGeneration;
+  const linkedId = conversationIdFromLocation();
   try {
     const payload = await apiFetch("/v1/conversations");
     if (generation !== authGeneration) return;
     const list = document.querySelector("#conversation-list");
     list.innerHTML = "";
-    if (!payload.items.length) { list.innerHTML = "<p>还没有历史对话</p>"; return; }
+    if (!payload.items.length) {
+      list.innerHTML = "<p>还没有历史对话</p>";
+      if (restore && linkedId) await openConversation(linkedId);
+      return;
+    }
     const heading = document.createElement("p"); heading.textContent = "历史对话"; list.append(heading);
     payload.items.forEach((item) => {
       const row = document.createElement("div"); row.className = "conversation-row";
@@ -492,8 +591,11 @@ async function loadConversations({ restore = false } = {}) {
     if (activeConversation) setChatTitle(activeConversation.title);
     if (restore) {
       const savedId = localStorage.getItem(`shiju_conversation_${currentUser.id}`);
-      const target = payload.items.find((item) => item.id === savedId) || payload.items[0];
-      if (target) await openConversation(target.id);
+      const target = payload.items.find((item) => item.id === linkedId)
+        || payload.items.find((item) => item.id === savedId)
+        || payload.items[0];
+      if (linkedId) await openConversation(linkedId);
+      else if (target) await openConversation(target.id);
     }
     filterConversations();
   } catch { /* 登录状态可能已过期，发送消息时会提示 */ }
@@ -502,27 +604,35 @@ async function loadConversations({ restore = false } = {}) {
 async function openConversation(conversationId) {
   if (!requireLogin()) return;
   const loadVersion = ++conversationLoadVersion;
-  const payload = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}`);
-  if (loadVersion !== conversationLoadVersion || !currentUser) return;
   clearJobProgressPolls();
   if (activeConversationEvents) activeConversationEvents.abort();
   clearConversationRefresh();
+  chatThread.replaceChildren();
+  currentConversationId = null;
+  chatSessionId = null;
+  agentStatus.textContent = "正在打开对话";
+  const payload = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}`);
+  if (loadVersion !== conversationLoadVersion || !currentUser) return;
   currentConversationId = payload.id; chatSessionId = payload.id;
+  window.currentConversationBranches = Array.isArray(payload.branches) ? payload.branches : [];
+  window.currentActiveBranchId = payload.active_branch_id || window.currentConversationBranches.find((item) => item.is_active)?.id || null;
+  setConversationLocation(payload.id);
   setChatTitle(payload.title);
   localStorage.setItem(`shiju_conversation_${currentUser.id}`, payload.id);
   chatThread.innerHTML = "";
   payload.messages.forEach(appendPersistedMessage);
-  if (payload.pending_proposal) {
-    const anchor = payload.messages.find((message) => message.id === payload.pending_proposal.assistant_message_id);
+  const conversationProposal = payload.pending_proposal || payload.conversation_proposal;
+  if (conversationProposal) {
+    const anchor = payload.messages.find((message) => message.id === conversationProposal.assistant_message_id);
     const anchorElement = anchor ? chatThread.querySelector(`[data-message-id="${CSS.escape(anchor.id)}"]`) : null;
-    appendProposalEditor(payload.pending_proposal, anchorElement);
+    appendProposalEditor(conversationProposal, anchorElement);
   }
   const jobs = await loadConversationJobs(payload);
   if (loadVersion !== conversationLoadVersion) return;
   jobs.forEach((job) => {
     const anchor = findHistoricalJobAnchor(job, payload.messages);
-    const proposalAnchor = chatThread.querySelector(`.proposal-editor[data-job-id="${CSS.escape(job.job_id)}"]`) || chatThread.querySelector(`.proposal-editor[data-proposal-id="${CSS.escape(job.proposal_id || "")}"]`) || chatThread.querySelector(".proposal-editor");
-    startJobProgress(job.job_id, job, proposalAnchor || anchor);
+    const proposalAnchor = chatThread.querySelector(`.proposal-editor[data-job-id="${CSS.escape(job.job_id)}"]`);
+    startJobProgress(job.job_id, job, proposalAnchor || anchor, payload.id);
   });
   document.querySelectorAll("#conversation-list button[data-conversation-id]").forEach((button) => button.toggleAttribute("aria-current", button.dataset.conversationId === payload.id));
   agentStatus.textContent = "已连接";
@@ -547,31 +657,16 @@ async function loadConversationJobs(conversation) {
 }
 
 function appendPersistedMessage(message) {
-  const state = message.status === "pending" ? "pending" : message.status === "failed" ? "error" : "";
+  const state = message.status === "pending" ? "pending" : message.status === "failed" ? "error" : message.status === "paused" || message.status === "interrupted" ? "paused" : "";
   const article = appendMessage(message.content, message.role, state, message);
   article.dataset.messageId = message.id;
   article.dataset.messageStatus = message.status || "completed";
+  if (message.turn_id) article.dataset.turnId = message.turn_id;
+  if (message.role === "assistant" && ["paused", "interrupted"].includes(message.status) && message.turn_id) appendAssistantContinueButton(article);
   if (message.job_id) {
     article.dataset.jobId = message.job_id;
   }
-  else if (message.role === "assistant" && message.status === "completed" && claimsJobSubmission(message.content)) {
-    appendUnverifiedJobNotice(message.id);
-  }
   return article;
-}
-
-function claimsJobSubmission(text) {
-  return /(已提交|进入队列|等待\s*Worker|等待生成)/i.test(String(text));
-}
-
-function appendUnverifiedJobNotice(messageId) {
-  if (chatThread.querySelector(`[data-unverified-message-id="${messageId}"]`)) return;
-  const details = document.createElement("details");
-  details.className = "job-progress job-progress--error";
-  details.open = true;
-  details.dataset.unverifiedMessageId = messageId || "current";
-  details.innerHTML = "<summary>生成任务未创建</summary><p class=\"job-progress__status\">Agent 提到了提交，但服务端没有找到真实 job_id。请重新确认生成；系统不会再把口头回复当作已提交。</p>";
-  chatThread.append(details);
 }
 
 function clearConversationRefresh() {
@@ -586,14 +681,28 @@ function scheduleConversationRefresh(conversationId) {
 
 async function refreshConversationMessages(conversationId) {
   if (currentConversationId !== conversationId) return;
+  const refreshVersion = conversationLoadVersion;
   try {
     const payload = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}/messages`);
+    if (refreshVersion !== conversationLoadVersion || currentConversationId !== conversationId) return;
+    // The active branch may have changed in another tab or after a completed turn.
+    // Re-render the authoritative path instead of leaving stale branch descendants
+    // in the linear chat DOM.
+    const renderedIds = [...chatThread.querySelectorAll("[data-message-id]")]
+      .map((node) => node.dataset.messageId)
+      .filter(Boolean);
+    const persistedIds = payload.items.map((message) => message.id);
+    if (renderedIds.length !== persistedIds.length || renderedIds.some((id, index) => id !== persistedIds[index])) {
+      await openConversation(conversationId);
+      return;
+    }
     let hasPending = false;
     payload.items.forEach((message) => {
       hasPending ||= message.status === "pending";
       const article = chatThread.querySelector(`[data-message-id="${message.id}"]`);
       if (!article) {
-        appendPersistedMessage(message);
+        const created = appendPersistedMessage(message);
+        if (message.job_id) startJobProgress(message.job_id, null, created, conversationId);
         return;
       }
       if (article.dataset.messageStatus !== message.status || article.querySelector(".message-content p")?.textContent !== normalizeAssistantText(message.content)) {
@@ -603,13 +712,13 @@ async function refreshConversationMessages(conversationId) {
       }
       if (message.job_id) {
         article.dataset.jobId = message.job_id;
-        const proposalAnchor = chatThread.querySelector(`.proposal-editor[data-job-id="${CSS.escape(message.job_id)}"]`) || chatThread.querySelector(".proposal-editor");
-        startJobProgress(message.job_id, null, proposalAnchor || article);
+        const proposalAnchor = chatThread.querySelector(`.proposal-editor[data-job-id="${CSS.escape(message.job_id)}"]`);
+        startJobProgress(message.job_id, null, proposalAnchor || article, conversationId);
       }
     });
-    if (hasPending) scheduleConversationRefresh(conversationId);
+    if (hasPending && refreshVersion === conversationLoadVersion && currentConversationId === conversationId) scheduleConversationRefresh(conversationId);
   } catch {
-    scheduleConversationRefresh(conversationId);
+    if (refreshVersion === conversationLoadVersion && currentConversationId === conversationId) scheduleConversationRefresh(conversationId);
   }
 }
 
@@ -1145,7 +1254,6 @@ function updateAuthUi() {
   document.querySelector("#drawer-logout-action").hidden = !currentUser;
   document.querySelector("#home-nav-link").hidden = Boolean(currentUser);
   document.querySelector(".site-brand").href = currentUser ? "#chat" : "#home";
-  document.querySelector("#chat-user-status").textContent = currentUser ? `已登录：${currentUser.display_name}` : "未登录，请先登录";
   const profileUserLabel = document.querySelector("#profile-user-label");
   if (profileUserLabel) profileUserLabel.textContent = currentUser ? `${currentUser.display_name} 的创作档案` : "登录后查看你生成的全部诗词。";
   const displayName = document.querySelector("#profile-display-name");
@@ -1192,7 +1300,8 @@ function resetAuthenticatedUi() {
   conversationLoadVersion++;
   if (activeConversationEvents) activeConversationEvents.abort();
   if (activeChatRequest) activeChatRequest.abort();
-  chatBusy = false;
+  activeChatStopMode = null;
+  setChatBusy(false);
   editingMessageId = null;
   chatThread.innerHTML = initialThreadMarkup;
   chatInput.value = "";
@@ -1210,14 +1319,14 @@ function resetAuthenticatedUi() {
   sessionStorage.removeItem("shiju_share_poem");
 }
 
-async function loadCurrentUser() {
+async function loadCurrentUser({ restore = true } = {}) {
   if (!authToken) return updateAuthUi();
   try { currentUser = await apiFetch("/v1/auth/me"); }
   catch { authToken = ""; localStorage.removeItem("shiju_token"); resetAuthenticatedUi(); }
   updateAuthUi();
   if (currentUser) {
     if (!window.location.hash || routeFromHash() === "home") showRoute("chat", { scroll: false });
-    await loadConversations({ restore: true }); await loadProfileData();
+    await loadConversations({ restore }); await loadProfileData();
     try { const notices = await apiFetch("/v1/forum/notifications?limit=5"); await renderDrawerNotifications(notices); } catch { /* forum notification store may not exist on an older database */ }
     if (routeFromHash() === "admin") await loadAdminData();
   }
@@ -1231,10 +1340,11 @@ window.addEventListener("storage", (event) => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && authToken) loadCurrentUser();
+  if (!document.hidden && authToken) loadCurrentUser({ restore: false });
 });
 
 function appendMessage(text, role, state = "", meta = {}) {
+  const shouldFollow = isChatScrollPinnedToBottom();
   const article = document.createElement("article");
   article.className = `chat-message chat-message--${role}`;
   if (state) article.classList.add(`chat-message--${state}`);
@@ -1256,11 +1366,15 @@ function appendMessage(text, role, state = "", meta = {}) {
   if (role === "user") {
     actions = document.createElement("div");
     actions.className = "chat-message-actions";
-    const versions = Array.isArray(meta.versions) && meta.versions.length
+    const branchVersions = Array.isArray(meta.siblings) && meta.siblings.length > 1 ? meta.siblings : null;
+    const versions = branchVersions || (Array.isArray(meta.versions) && meta.versions.length
       ? meta.versions.map((item) => ({ content: String(item.content || ""), version_number: item.version_number }))
-      : [{ content: text, version_number: 1 }];
+      : [{ content: text, version_number: 1 }]);
+    article.dataset.branchMessageIds = JSON.stringify((branchVersions || []).map((item) => item.id));
+    article.dataset.messageSiblings = JSON.stringify(branchVersions || []);
     article.dataset.messageVersions = JSON.stringify(versions);
-    article.dataset.versionIndex = String(Math.max(0, versions.length - 1));
+    const activeBranchIndex = branchVersions?.findIndex((item) => item.id === meta.id) ?? -1;
+    article.dataset.versionIndex = String(activeBranchIndex >= 0 ? activeBranchIndex : Math.max(0, versions.length - 1));
     const copy = document.createElement("button");
     copy.type = "button"; copy.className = "chat-message-tool"; copy.dataset.copyMessage = "true";
     copy.title = "复制消息"; copy.setAttribute("aria-label", "复制消息"); copy.textContent = "⧉";
@@ -1284,7 +1398,12 @@ function appendMessage(text, role, state = "", meta = {}) {
       actions.append(previous, counter, next);
     }
   }
-  if (role === "assistant") article.append(avatar, content);
+  if (role === "assistant") {
+    const stack = document.createElement("div");
+    stack.className = "chat-message-stack";
+    stack.append(content);
+    article.append(avatar, stack);
+  }
   else {
     const stack = document.createElement("div");
     stack.className = "chat-message-stack";
@@ -1293,7 +1412,7 @@ function appendMessage(text, role, state = "", meta = {}) {
   }
   if (role === "user" && article.dataset.messageVersions) updateMessageVersionControls(article);
   chatThread.append(article);
-  chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
+  if (shouldFollow) scrollChatToBottom();
   return article;
 }
 
@@ -1309,6 +1428,33 @@ function updateMessageVersionControls(article) {
   const next = article.querySelector(".chat-message-version-next");
   if (previous) previous.disabled = index <= 0;
   if (next) next.disabled = index >= versions.length - 1;
+  const siblings = JSON.parse(article.dataset.messageSiblings || "[]");
+  if (!siblings.length) syncMessageVersionBranch(article, index >= versions.length - 1);
+}
+
+function isChatScrollPinnedToBottom() {
+  if (!chatThreadScroll) return true;
+  return chatThreadScroll.scrollHeight - chatThreadScroll.scrollTop - chatThreadScroll.clientHeight < 24;
+}
+
+function scrollChatToBottom() {
+  if (chatThreadScroll) chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
+}
+
+function syncMessageVersionBranch(article, showDescendants) {
+  let node = article?.nextElementSibling;
+  while (node) {
+    if (showDescendants) {
+      if (node.dataset.hiddenByMessageVersion === "true") {
+        node.hidden = false;
+        delete node.dataset.hiddenByMessageVersion;
+      }
+    } else if (!node.hidden || node.dataset.hiddenByMessageVersion === "true") {
+      node.hidden = true;
+      node.dataset.hiddenByMessageVersion = "true";
+    }
+    node = node.nextElementSibling;
+  }
 }
 
 const toolDisplayNames = {
@@ -1319,9 +1465,9 @@ const toolDisplayNames = {
   get_ci_meter: "查询词牌格律",
   list_supported_forms: "查询支持的体裁",
   prepare_generation: "准备创作方案",
-  prepare_rewrite: "准备改写方案",
+  prepare_partial_generation: "准备部分生成方案",
   submit_generation: "提交生成任务",
-  submit_rewrite: "提交改写任务",
+  submit_partial_generation: "提交部分生成任务",
   get_poetry_job: "查询生成进度",
 };
 
@@ -1331,26 +1477,34 @@ function toolDisplayName(name) {
 
 function updateToolActivity(article, toolCallId, name, state, output = null) {
   if (!article) return;
-  let activity = article.querySelector(".tool-activity");
+  const existingActivity = article.querySelector(".tool-activity");
+  if (state !== "running") {
+    if (existingActivity) {
+      window.clearTimeout(existingActivity._removeTimer);
+      const startedAt = Number(existingActivity.dataset.startedAt || Date.now());
+      const remaining = Math.max(420, 720 - (Date.now() - startedAt));
+      existingActivity._removeTimer = window.setTimeout(() => existingActivity.remove(), remaining);
+    }
+    return;
+  }
+  let activity = existingActivity;
   if (!activity) {
     activity = document.createElement("div");
     activity.className = "tool-activity";
     activity.setAttribute("aria-live", "polite");
     activity.setAttribute("aria-label", "工具调用状态");
-    article.querySelector(".message-content")?.append(activity);
+    article.querySelector(".chat-message-stack")?.append(activity);
   }
-  const id = String(toolCallId || name || "unknown").replace(/[^A-Za-z0-9_-]/g, "_");
-  let item = activity.querySelector(`[data-tool-call-id="${CSS.escape(id)}"]`);
+  window.clearTimeout(activity._removeTimer);
+  activity.dataset.startedAt = String(Date.now());
+  let item = activity.querySelector(".tool-activity__item");
   if (!item) {
     item = document.createElement("div");
     item.className = "tool-activity__item";
-    item.dataset.toolCallId = id;
     activity.append(item);
   }
-  item.className = `tool-activity__item tool-activity__item--${state}`;
-  const marker = state === "running" ? "正在调用" : state === "completed" ? "已完成" : "调用失败";
-  item.textContent = `${marker}：${toolDisplayName(name)}`;
-  if (state === "failed" && output?.error) item.title = String(output.error);
+  item.className = "tool-activity__item tool-activity__item--running";
+  item.textContent = "正在判断意图";
 }
 
 function filterConversations() {
@@ -1366,11 +1520,68 @@ function hideChatWelcome() {
 }
 
 function replaceMessage(article, text, state = "") {
+  const shouldFollow = isChatScrollPinnedToBottom();
   const content = article.querySelector(".message-content p");
   content.textContent = normalizeAssistantText(text);
   article.classList.remove("chat-message--pending", "chat-message--error");
   if (state) article.classList.add(`chat-message--${state}`);
-  chatThreadScroll.scrollTop = chatThreadScroll.scrollHeight;
+  if (shouldFollow) scrollChatToBottom();
+}
+
+function appendAssistantContinueButton(article) {
+  if (!article || article.querySelector("[data-continue-message]")) return;
+  const stack = article.querySelector(".chat-message-stack");
+  if (!stack) return;
+  const actions = document.createElement("div");
+  actions.className = "chat-message-actions";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "chat-message-tool chat-message-continue";
+  button.dataset.continueMessage = "true";
+  button.title = "继续生成";
+  button.setAttribute("aria-label", "继续生成");
+  button.textContent = "继续";
+  actions.append(button);
+  stack.append(actions);
+}
+
+function openProposalHelpDialog() {
+  let dialog = document.querySelector("#proposal-help-dialog");
+  if (!dialog) {
+    dialog = document.createElement("dialog");
+    dialog.id = "proposal-help-dialog";
+    dialog.className = "proposal-help-dialog";
+    dialog.setAttribute("aria-labelledby", "proposal-help-title");
+    dialog.innerHTML = `
+      <form method="dialog" class="proposal-help-dialog__shell">
+        <header class="proposal-help-dialog__header">
+          <div><p class="eyebrow">创作方案说明</p><h2 id="proposal-help-title">每个配置怎么填写</h2></div>
+          <button type="submit" class="icon-button" aria-label="关闭说明">×</button>
+        </header>
+        <div class="proposal-help-dialog__body">
+          <p>这些字段会和“编辑创作要求”一起提交给本地创作模型。不会填写 JSON 时，也可以回到对话框，用自然语言告诉 Agent 你想修改什么。</p>
+          <dl>
+            <div><dt>编辑创作要求</dt><dd>给模型的具体写作指令，可直接用自然语言描述意象、情绪、结构和格律要求。</dd></div>
+            <div><dt>候选数量</dt><dd>要生成几首候选，填写 1 到 5 的数字。</dd></div>
+            <div><dt>诗体</dt><dd>选择唐诗、宋词、汉俳或排律。</dd></div>
+            <div><dt>篇式 / 词牌</dt><dd>填写具体的诗体形式或词牌名称。</dd></div>
+            <div><dt>标题</dt><dd>填写作品题目或主题名称。</dd></div>
+            <div><dt>生成韵书</dt><dd>选择判定押韵时使用的韵书。</dd></div>
+            <div><dt>押韵策略</dt><dd>自动选韵、固定韵部或随机选韵。选择固定韵部时，再填写“指定韵部”。</dd></div>
+            <div><dt>指定韵部（JSON）</dt><dd>填写 JSON 对象，键是韵组编号，值是韵部名称。没有指定韵部时填空对象。</dd></div>
+            <div><dt>其他创作配置（JSON）</dt><dd>填写额外选项对象；没有额外配置时填空对象。</dd></div>
+            <div><dt>指定句子（JSON）</dt><dd>固定某些句子时填写 JSON 对象，键是句号，值是固定句子。没有固定句子时填空对象。</dd></div>
+            <div><dt>多音字</dt><dd>严格判定会保守处理多音字；放行多音会允许模型结合语境判断。</dd></div>
+            <div><dt>句数</dt><dd>仅排律需要填写，使用不少于 10 的偶数。</dd></div>
+            <div><dt>允许拗救</dt><dd>唐诗或排律的格律选项，勾选后允许符合规则的拗救。</dd></div>
+          </dl>
+        </div>
+        <footer class="proposal-help-dialog__footer"><button type="submit" class="quiet-button">知道了</button></footer>
+      </form>`;
+    document.body.append(dialog);
+  }
+  if (typeof dialog.showModal === "function") dialog.showModal();
+  else dialog.setAttribute("open", "");
 }
 
 function appendProposalEditor(prepared, anchor = null) {
@@ -1379,11 +1590,14 @@ function appendProposalEditor(prepared, anchor = null) {
   const panel = document.createElement("details");
   panel.className = "proposal-editor";
   panel.dataset.proposalId = prepared.proposal_id;
+  panel.dataset.conversationId = currentConversationId || "";
   if (prepared.submitted_job_id) panel.dataset.jobId = prepared.submitted_job_id;
   panel.open = true;
 
   const summary = document.createElement("summary");
-  summary.textContent = prepared.kind === "rewrite" ? "重写提示词（可修改）" : "创作提示词（可修改）";
+  const isPartial = prepared.kind === "partial_generate" || prepared.kind === "rewrite";
+  const isRevision = isPartial && Boolean(proposal.original_text);
+  summary.textContent = isPartial ? (isRevision ? "编辑改写要求" : "编辑部分生成要求") : "编辑创作提示词";
   const body = document.createElement("div");
   body.className = "proposal-editor__body";
   const meta = document.createElement("p");
@@ -1391,13 +1605,23 @@ function appendProposalEditor(prepared, anchor = null) {
   meta.textContent = `${form || "诗词生成方案"}。以下是 Agent 已选择的实际生成参数，可直接修改后提交。`;
 
   const promptLabel = document.createElement("label");
-  promptLabel.textContent = "创作要求（可编辑）";
+  const promptHeading = document.createElement("span");
+  promptHeading.className = "proposal-editor__field-heading";
+  const promptTitle = document.createElement("span");
+  promptTitle.textContent = "编辑创作要求";
+  const help = document.createElement("button");
+  help.type = "button";
+  help.className = "proposal-editor__help text-button";
+  help.textContent = "点击查看说明";
+  help.addEventListener("click", openProposalHelpDialog);
+  promptHeading.append(promptTitle, help);
+  promptLabel.append(promptHeading);
   const prompt = document.createElement("textarea");
   prompt.rows = 5;
   prompt.value = prepared.editable_prompt || "";
   promptLabel.append(prompt);
 
-  if (prepared.kind === "rewrite" && proposal.original_text) {
+  if (isRevision && proposal.original_text) {
     const originalLabel = document.createElement("label");
     originalLabel.textContent = `原诗（固定上下文；重写第 ${proposal.target_line_numbers?.join("、") || "指定"} 句）`;
     const original = document.createElement("textarea");
@@ -1409,10 +1633,17 @@ function appendProposalEditor(prepared, anchor = null) {
 
   const config = document.createElement("div");
   config.className = "proposal-editor__config";
-  const field = (labelText, control) => {
+  const field = (labelText, control, example = "") => {
     const label = document.createElement("label");
     const text = document.createElement("span"); text.textContent = labelText;
-    label.append(text, control); config.append(label);
+    label.append(text);
+    if (example) {
+      const hint = document.createElement("small");
+      hint.className = "proposal-editor__example";
+      hint.textContent = `范例：${example}`;
+      label.append(hint);
+    }
+    label.append(control); config.append(label);
     return control;
   };
 
@@ -1428,14 +1659,62 @@ function appendProposalEditor(prepared, anchor = null) {
   const meterType = document.createElement("select");
   ["唐诗", "宋词", "汉俳", "排律"].forEach((name) => meterType.add(new Option(name, name, false, name === proposal.meter_type)));
   field("诗体", meterType);
-  const formName = document.createElement("input");
-  formName.type = "text"; formName.value = proposal.form_name || ""; formName.required = true;
-  formName.setAttribute("list", "poetry-form-suggestions");
+  const formName = document.createElement("select");
+  const standardForms = ["五言绝句", "七言绝句", "五言律诗", "七言律诗", "五言排律", "七言排律", "汉俳"];
+  for (const name of standardForms) formName.add(new Option(name, name));
+  formName.value = proposal.form_name || "";
   field("篇式 / 词牌", formName);
+  const selectedFormName = () => formName.value;
+  const formLabel = formName.closest("label");
+  const allowedForms = { "唐诗": new Set(["五言绝句", "七言绝句", "五言律诗", "七言律诗"]), "排律": new Set(["五言排律", "七言排律"]), "汉俳": new Set() };
+  const updateFormOptions = () => {
+    const type = meterType.value;
+    const isSongci = type === "宋词";
+    const isHanpai = type === "汉俳";
+    const allowed = allowedForms[type] || new Set(meterCatalog.map((item) => item.name));
+    for (const option of formName.options) option.hidden = isSongci ? !meterCatalog.some((item) => item.name === option.value) : !allowed.has(option.value);
+    formLabel.hidden = isHanpai;
+    if (isHanpai) formName.value = "汉俳";
+    else if (![...formName.options].some((option) => option.value === formName.value && !option.hidden)) formName.value = [...formName.options].find((option) => !option.hidden)?.value || "";
+    updateVariants();
+  };
+  formName.addEventListener("change", updateFormOptions);
+
+  const variant = document.createElement("select");
+  variant.add(new Option("默认变体", ""));
+  const variantLabel = field("宋词变体", variant).closest("label");
+  variantLabel.hidden = meterType.value !== "宋词";
+  let meterCatalog = [];
+  const loadMeterCatalog = async () => {
+    if (window.shijuMeterCatalogPromise) return window.shijuMeterCatalogPromise;
+    window.shijuMeterCatalogPromise = apiFetch("/v1/poetry/jobs/meters", { headers: authHeaders() }).then((value) => value.items || []).catch(() => []);
+    return window.shijuMeterCatalogPromise;
+  };
+  const updateVariants = () => {
+    const current = variant.value || proposal.variant_name || "";
+    variant.replaceChildren(new Option("默认变体", ""));
+    const meter = meterCatalog.find((item) => item.name === selectedFormName());
+    for (const name of (meter?.variants || [])) variant.add(new Option(name, name, false, name === current));
+    variant.value = current && (meter?.variants || []).includes(current) ? current : "";
+    variantLabel.hidden = meterType.value !== "宋词";
+  };
+  loadMeterCatalog().then((items) => {
+    meterCatalog = items;
+    for (const item of items) {
+      if (!item.name || formName.querySelector(`option[value="${CSS.escape(item.name)}"]`)) continue;
+      formName.add(new Option(item.name, item.name));
+    }
+    let draftChoice = "";
+    try { draftChoice = JSON.parse(localStorage.getItem(draftKey) || "null")?.formNameChoice || ""; } catch (_) { /* ignore */ }
+    if (draftChoice && [...formName.options].some((option) => option.value === draftChoice)) formName.value = draftChoice;
+    else if (proposal.form_name && items.some((item) => item.name === proposal.form_name)) formName.value = proposal.form_name;
+    updateFormOptions();
+  });
+  meterType.addEventListener("change", updateFormOptions);
 
   const theme = document.createElement("textarea");
-  theme.rows = 2; theme.value = proposal.theme || ""; theme.required = prepared.kind !== "rewrite";
-  field("主题", theme);
+  theme.rows = 2; theme.value = proposal.theme || ""; theme.required = !isPartial;
+  field("标题", theme);
 
   const rhymeBook = document.createElement("select");
   [["Xinyun", "中华新韵"], ["Pinshui", "平水韵"], ["Cilin", "词林正韵"], ["Tongyun", "中华通韵"]].forEach(([value, label]) => {
@@ -1447,13 +1726,14 @@ function appendProposalEditor(prepared, anchor = null) {
   [["auto", "自动选韵"], ["fixed", "固定韵部"], ["random", "随机选韵"]].forEach(([value, label]) => {
     rhymeMode.add(new Option(label, value, false, value === (proposal.rhyme_mode || "auto")));
   });
+  rhymeMode.value = proposal.rhyme_mode || "auto";
   field("押韵策略", rhymeMode);
 
   const rhymeParts = document.createElement("textarea");
   rhymeParts.rows = 2;
   rhymeParts.value = JSON.stringify(proposal.rhyme_parts || {}, null, 2);
   rhymeParts.placeholder = '{"1":"一东"}';
-  field("指定韵部（JSON）", rhymeParts);
+  field("指定韵部（JSON）", rhymeParts, '{"1":"一东"}');
 
   const taskOptions = document.createElement("textarea");
   taskOptions.rows = 3;
@@ -1461,18 +1741,71 @@ function appendProposalEditor(prepared, anchor = null) {
   taskOptions.placeholder = "{}";
   field("其他创作配置（JSON）", taskOptions);
 
+  const fixedLines = document.createElement("textarea");
+  fixedLines.rows = 3;
+  fixedLines.value = JSON.stringify(proposal.fixed_lines || {}, null, 2);
+  fixedLines.placeholder = '{"3":"指定的第三句"}';
+  const fixedLinesLabel = field("指定句子（JSON）", fixedLines, '{"3":"江城秋色入帘明","4":"远浦归帆带晚风"}').closest("label");
+  fixedLinesLabel.hidden = !isPartial;
+
+  const rhymeLockHint = document.createElement("small");
+  rhymeLockHint.className = "proposal-editor__rhyme-lock";
+  rhymeLockHint.hidden = true;
+  rhymeParts.closest("label").append(rhymeLockHint);
+  let rhymeLookupVersion = 0;
+  const syncFixedLineRhyme = async () => {
+    if (!isPartial) return;
+    const version = ++rhymeLookupVersion;
+    let lines;
+    try { lines = fixedLines.value.trim() ? JSON.parse(fixedLines.value) : {}; } catch (_) { return; }
+    const rhymeLineNumbers = (meterType.value === "唐诗")
+      ? (formName.value.includes("绝句") ? [1, 2, 4] : [1, 2, 4, 6, 8])
+      : meterType.value === "排律"
+        ? Array.from({ length: Number(numLines.value || 0) }, (_, index) => index + 1).filter((number) => number === 1 || number % 2 === 0)
+        : [];
+    const endings = Object.entries(lines)
+      .filter(([line]) => rhymeLineNumbers.includes(Number(line)))
+      .map(([, value]) => String(value).trim())
+      .filter(Boolean);
+    if (!endings.length) {
+      rhymeMode.disabled = false; rhymeLockHint.hidden = true; return;
+    }
+    try {
+      const results = await Promise.all(endings.map((line) => apiFetch(`/v1/poetry/jobs/rhyme-part?text=${encodeURIComponent(line)}&rhyme_book=${encodeURIComponent(rhymeBook.value)}`, { headers: authHeaders() })));
+      if (version !== rhymeLookupVersion) return;
+      const common = results.map((item) => new Set(item.parts || [])).reduce((shared, current) => new Set([...shared].filter((part) => current.has(part))));
+      if (common.size === 1) {
+        const part = [...common][0];
+        rhymeMode.value = "fixed";
+        rhymeParts.value = JSON.stringify({ "1": part }, null, 2);
+        rhymeMode.disabled = true;
+        rhymeLockHint.hidden = false;
+        rhymeLockHint.textContent = `已根据指定句末字锁定韵部：${part}，押韵策略不可修改。`;
+        updateConditionalFields();
+      } else {
+        rhymeMode.disabled = false;
+        rhymeLockHint.hidden = true;
+      }
+    } catch (_) {
+      rhymeMode.disabled = false;
+      rhymeLockHint.hidden = true;
+    }
+  };
+  fixedLines.addEventListener("input", syncFixedLineRhyme);
+  rhymeBook.addEventListener("change", syncFixedLineRhyme);
+
   const polyphonic = document.createElement("select");
-  polyphonic.add(new Option("严格判定", "strict", false, proposal.strict_polyphonic !== false));
-  polyphonic.add(new Option("放行多音", "permissive", false, proposal.strict_polyphonic === false));
+  polyphonic.add(new Option("严格判定", "strict", false, proposal.strict_polyphonic === true));
+  polyphonic.add(new Option("放行多音", "permissive", false, proposal.strict_polyphonic !== true));
   field("多音字", polyphonic);
 
   const numLines = document.createElement("input");
   numLines.type = "number"; numLines.min = "4"; numLines.max = "128"; numLines.step = "2";
-  numLines.value = proposal.num_lines || ""; numLines.placeholder = "按篇式自动";
+  numLines.value = proposal.num_lines || ""; numLines.placeholder = "例如：十六（排律）";
   const numLinesLabel = field("句数", numLines).closest("label");
 
   const allowAoJiu = document.createElement("input");
-  allowAoJiu.type = "checkbox"; allowAoJiu.checked = Boolean(proposal.task_options?.allow_aojiu);
+  allowAoJiu.type = "checkbox"; allowAoJiu.checked = proposal.task_options?.allow_aojiu !== false;
   const aoJiuLabel = document.createElement("label");
   aoJiuLabel.className = "proposal-editor__check";
   const aoJiuText = document.createElement("span"); aoJiuText.textContent = "允许拗救";
@@ -1480,6 +1813,7 @@ function appendProposalEditor(prepared, anchor = null) {
 
    const updateConditionalFields = () => {
      numLinesLabel.hidden = meterType.value !== "排律";
+     if (meterType.value !== "排律") numLines.value = "";
      aoJiuLabel.hidden = !["唐诗", "排律"].includes(meterType.value);
      rhymeParts.closest("label").hidden = rhymeMode.value !== "fixed";
    };
@@ -1494,15 +1828,36 @@ function appendProposalEditor(prepared, anchor = null) {
   state.textContent = "修改后将直接进入本地模型";
   const submit = document.createElement("button");
   submit.type = "button"; submit.className = "primary-button";
-  submit.textContent = prepared.kind === "rewrite" ? "提交重写" : "提交生成";
+  submit.textContent = isPartial ? (isRevision ? "提交改写" : "提交部分生成") : "提交生成";
+  const draftKey = `shiju:proposal-draft:${prepared.proposal_id}`;
+  try {
+    const draft = JSON.parse(localStorage.getItem(draftKey) || "null");
+    if (draft && typeof draft === "object") {
+      for (const [control, key] of [[prompt, "prompt"], [count, "count"], [meterType, "meterType"], [formName, "formNameChoice"], [theme, "theme"], [rhymeBook, "rhymeBook"], [rhymeMode, "rhymeMode"], [rhymeParts, "rhymeParts"], [taskOptions, "taskOptions"], [fixedLines, "fixedLines"], [polyphonic, "polyphonic"], [numLines, "numLines"]]) {
+        if (draft[key] !== undefined) control.value = draft[key];
+      }
+      if (draft.variant !== undefined) variant.value = draft.variant;
+      if (draft.allowAoJiu !== undefined) allowAoJiu.checked = draft.allowAoJiu === true;
+      // 草稿恢复可能改变诗体、押韵策略或句数，必须重新计算条件字段可见性。
+      updateFormOptions();
+      updateConditionalFields();
+    }
+  } catch (_) { /* ignore malformed local drafts */ }
+  const saveDraft = () => {
+    if (panel.classList.contains("is-submitted")) return;
+    const draft = { prompt: prompt.value, count: count.value, meterType: meterType.value, formNameChoice: formName.value, variant: variant.value, theme: theme.value, rhymeBook: rhymeBook.value, rhymeMode: rhymeMode.value, rhymeParts: rhymeParts.value, taskOptions: taskOptions.value, fixedLines: fixedLines.value, polyphonic: polyphonic.value, numLines: numLines.value, allowAoJiu: allowAoJiu.checked };
+    try { localStorage.setItem(draftKey, JSON.stringify(draft)); state.textContent = "已自动保存草稿"; } catch (_) { /* storage may be unavailable */ }
+  };
+  panel.addEventListener("input", saveDraft);
+  panel.addEventListener("change", saveDraft);
   submit.addEventListener("click", async () => {
-    if (!currentConversationId) {
+    if (!prepared.direct && !currentConversationId) {
       state.textContent = "对话正在保存，请稍候再提交。";
       return;
     }
      const requirement = prompt.value.trim();
-    if (!requirement || !formName.value.trim()) {
-      state.textContent = "提示词和篇式不能为空。";
+    if (!requirement || !selectedFormName()) {
+      state.textContent = "编辑创作要求和篇式不能为空。也可以直接在对话中用自然语言让 Agent 重新生成方案。";
       return;
     }
     submit.disabled = true;
@@ -1513,7 +1868,7 @@ function appendProposalEditor(prepared, anchor = null) {
          selectedTaskOptions = taskOptions.value.trim() ? JSON.parse(taskOptions.value) : {};
          if (!selectedTaskOptions || Array.isArray(selectedTaskOptions) || typeof selectedTaskOptions !== "object") throw new Error("配置必须是 JSON 对象");
        } catch (error) {
-         state.textContent = `其他配置格式错误：${error.message}`;
+         state.textContent = `其他配置格式错误：${error.message}。示例：{"allow_aojiu":true}。也可以用自然语言让 Agent 重新生成方案。`;
          submit.disabled = false;
          return;
        }
@@ -1524,32 +1879,70 @@ function appendProposalEditor(prepared, anchor = null) {
          selectedRhymeParts = rhymeParts.value.trim() ? JSON.parse(rhymeParts.value) : {};
          if (!selectedRhymeParts || Array.isArray(selectedRhymeParts) || typeof selectedRhymeParts !== "object") throw new Error("韵部必须是 JSON 对象");
        } catch (error) {
-         state.textContent = `韵部格式错误：${error.message}`;
+         state.textContent = `韵部格式错误：${error.message}。示例：{"1":"一东"}。也可以用自然语言让 Agent 重新生成方案。`;
          submit.disabled = false;
          return;
        }
-       const payload = await apiFetch(`/v1/agent/proposals/${encodeURIComponent(prepared.proposal_id)}/submit`, {
+       let selectedFixedLines = {};
+       try {
+         selectedFixedLines = fixedLines.value.trim() ? JSON.parse(fixedLines.value) : {};
+         if (!selectedFixedLines || Array.isArray(selectedFixedLines) || typeof selectedFixedLines !== "object") throw new Error("指定句子必须是 JSON 对象");
+         for (const [line, text] of Object.entries(selectedFixedLines)) if (!/^\d+$/.test(line) || !String(text).trim()) throw new Error("句号必须为正整数且句子不能为空");
+       } catch (error) {
+         state.textContent = `指定句子格式错误：${error.message}。示例：{"3":"江城秋色入帘明","4":"远浦归帆带晚风"}。也可以用自然语言让 Agent 重新生成方案。`;
+         submit.disabled = false;
+         return;
+       }
+       if (isPartial && Object.keys(selectedFixedLines).length === 0) {
+         state.textContent = "部分生成必须至少指定一句需要原样保留的句子。";
+         submit.disabled = false;
+         return;
+       }
+       const directPayload = {
+         requirement,
+         candidate_count: Number(count.value),
+         meter_type: meterType.value,
+         form_name: selectedFormName(),
+         theme: theme.value.trim(),
+         rhyme_dict_name: rhymeBook.value,
+         rhyme_mode: rhymeMode.value,
+         rhyme_parts: selectedRhymeParts,
+         strict_polyphonic: polyphonic.value === "strict",
+         num_lines: meterType.value === "排律" && numLines.value ? Number(numLines.value) : null,
+         task_options: selectedTaskOptions,
+       };
+       if (isPartial) {
+         directPayload.variant_name = meterType.value === "宋词" ? (variant.value || null) : null;
+         directPayload.fixed_lines = selectedFixedLines;
+       }
+       try {
+         const titlePayload = [
+           isPartial ? "部分生成诗词" : "生成整首诗词",
+           `${directPayload.meter_type}${directPayload.form_name ? ` ${directPayload.form_name}` : ""}`,
+           directPayload.theme ? `主题：${directPayload.theme}` : "",
+           requirement,
+           isPartial && Object.keys(selectedFixedLines).length ? `指定句：${JSON.stringify(selectedFixedLines)}` : "",
+         ].filter(Boolean).join("；");
+         const renamed = await apiFetch(`/v1/conversations/${encodeURIComponent(currentConversationId)}/auto-title`, {
+           method: "POST",
+           headers: authHeaders({ "Content-Type": "application/json" }),
+           body: JSON.stringify({ message: titlePayload }),
+         });
+         setChatTitle(renamed.title);
+       } catch (_) { /* 标题生成失败不影响诗词任务提交 */ }
+       const endpoint = prepared.direct
+         ? `${isPartial ? "/v1/poetry/jobs/partial-generate" : "/v1/poetry/jobs/generate"}?conversation_id=${encodeURIComponent(currentConversationId)}`
+         : `/v1/agent/proposals/${encodeURIComponent(prepared.proposal_id)}/submit`;
+       const payload = await apiFetch(endpoint, {
         method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          conversation_id: currentConversationId,
-          requirement,
-          candidate_count: Number(count.value),
-          meter_type: meterType.value,
-           form_name: formName.value.trim(),
-           theme: theme.value.trim(),
-           rhyme_dict_name: rhymeBook.value,
-           rhyme_mode: rhymeMode.value,
-           rhyme_parts: selectedRhymeParts,
-          strict_polyphonic: polyphonic.value === "strict",
-          num_lines: numLines.value ? Number(numLines.value) : null,
-           task_options: selectedTaskOptions,
-        }),
+        headers: authHeaders({ "Content-Type": "application/json", ...(prepared.direct ? { "Idempotency-Key": prepared.proposal_id } : {}) }),
+        body: JSON.stringify(prepared.direct ? directPayload : { conversation_id: currentConversationId, ...directPayload }),
       });
       panel.querySelectorAll("textarea, input, select, button").forEach((control) => { control.disabled = true; });
       panel.classList.add("is-submitted");
       panel.dataset.jobId = payload.job_id;
       state.textContent = "已提交，开始生成。";
+      try { localStorage.removeItem(draftKey); } catch (_) { /* ignore */ }
       submit.textContent = "已提交";
       startJobProgress(payload.job_id, payload, panel);
     } catch (error) {
@@ -1577,8 +1970,13 @@ function setChatBusy(busy) {
   chatBusy = busy;
   chatForm.setAttribute("aria-busy", String(busy));
   chatInput.disabled = busy;
-  chatSubmit.disabled = busy;
-  if (chatCancel) chatCancel.hidden = !busy;
+  chatSubmit.disabled = false;
+  if (chatCancel) chatCancel.hidden = true;
+  chatSubmit.title = busy ? "暂停输出" : "发送";
+  chatSubmit.setAttribute("aria-label", busy ? "暂停输出" : "发送");
+  chatSubmit.innerHTML = busy
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1"></rect></svg>'
+    : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5"></path></svg>';
 }
 
 function responseError(payload, status) {
@@ -1743,17 +2141,15 @@ function renderAvailableScrolls(container, job, requestMeta) {
   });
 }
 
-function startJobProgress(jobId, initialJob = null, anchor = null) {
+function startJobProgress(jobId, initialJob = null, anchor = null, conversationId = currentConversationId) {
   if (!jobId || !authToken) return;
   const existing = chatThread.querySelector(`.job-progress[data-job-id="${CSS.escape(jobId)}"]`);
-  if (existing) {
-    if (anchor?.parentElement === chatThread && existing !== anchor.nextElementSibling) anchor.after(existing);
-    return;
-  }
+  if (existing) return;
   if (activeJobPolls.has(jobId)) return;
   const details = document.createElement("details");
   details.className = "job-progress"; details.open = true;
   details.dataset.jobId = jobId;
+  details.dataset.conversationId = conversationId || "";
   details.innerHTML = "<summary><span>诗词生成进度</span><span class=\"job-progress__count\">0 / 0</span></summary><p class=\"job-progress__status\">任务已提交，等待 Worker……</p><div class=\"job-progress__candidates\"></div><div class=\"job-progress__results\" aria-live=\"polite\"></div>";
   if (anchor?.parentElement === chatThread) {
     const proposal = anchor.nextElementSibling?.matches?.(".proposal-editor")
@@ -1773,7 +2169,7 @@ function startJobProgress(jobId, initialJob = null, anchor = null) {
   const archivedOrdinals = new Set();
   let requestMeta = initialJob?.request || {};
   const render = async (job) => {
-    if (stopped) return true;
+    if (stopped || currentConversationId !== conversationId) return true;
     if (job.request) requestMeta = job.request;
     const labels = {
       queued: job.waiting_for_worker ? "未检测到生成 Worker，任务正在等待……" : "已进入生成队列……",
@@ -1857,6 +2253,8 @@ chatForm.addEventListener("submit", async (event) => {
     return;
   }
   const editedMessageId = editingMessageId;
+  const resumingTurnId = resumeTurnId;
+  resumeTurnId = null;
   let editedVersions = null;
   if (editedMessageId) {
     const editedArticle = chatThread.querySelector(`[data-message-id="${CSS.escape(editedMessageId)}"]`);
@@ -1888,10 +2286,15 @@ chatForm.addEventListener("submit", async (event) => {
   const nextVersions = editedMessageId
     ? [...(editedVersions || []), { content: message, version_number: (editedVersions?.length || 0) + 1 }]
     : undefined;
-  const userMessageArticle = appendMessage(message, "user", "", nextVersions ? { versions: nextVersions } : {});
+  const userMessageArticle = resumingTurnId ? null : appendMessage(message, "user", "", nextVersions ? { versions: nextVersions } : {});
   chatInput.value = "";
   chatInput.style.height = "";
-  const waitingMessage = appendMessage("正在斟酌……", "assistant", "pending");
+  const waitingMessage = resumingTurnId
+    ? chatThread.querySelector(`[data-turn-id="${CSS.escape(resumingTurnId)}"]`)
+    : appendMessage("正在斟酌……", "assistant", "pending");
+  if (!waitingMessage) return;
+  activeAssistantMessage = waitingMessage;
+  activeChatStopMode = null;
   const requestConversationId = currentConversationId;
   const requestController = new AbortController();
   activeChatRequest = requestController;
@@ -1899,14 +2302,16 @@ chatForm.addEventListener("submit", async (event) => {
   agentStatus.textContent = "思考中";
 
   try {
+    const chatPayload = { message, model: chatModel?.value || "deepseek-v3.2-guiji-cc", session_id: chatSessionId, conversation_id: currentConversationId, parent_message_id: editedMessageId || null };
+    if (resumingTurnId) chatPayload.turn_id = resumingTurnId;
     const response = await fetch("/v1/agent/chat/stream", {
       method: "POST",
       headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ message, model: chatModel?.value || "deepseek-v3.2-guiji-cc", session_id: chatSessionId, conversation_id: currentConversationId, parent_message_id: editedMessageId || null }),
+      body: JSON.stringify(chatPayload),
       signal: requestController.signal,
     });
     if (!response.ok) { const payload = await response.json().catch(() => ({})); throw new Error(responseError(payload, response.status)); }
-    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ""; let reply = ""; let responseConversationId = requestConversationId; const jobs = [];
+    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = ""; let responseConversationId = requestConversationId; let reply = ""; const jobs = [];
     const consume = async () => {
       while (true) {
         const { value, done } = await reader.read(); if (done) break;
@@ -1915,18 +2320,21 @@ chatForm.addEventListener("submit", async (event) => {
           const event = block.match(/^event:\s*(.+)$/m)?.[1]; const dataLine = block.match(/^data:\s*(.*)$/m)?.[1]; if (!dataLine) continue;
           let data = {}; try { data = JSON.parse(dataLine); } catch { continue; }
           if (event === "turn.started") {
+            activeTurnId = data.turn_id || activeTurnId;
+            waitingMessage.dataset.turnId = activeTurnId || "";
             responseConversationId = data.conversation_id || responseConversationId;
             if (data.user_message_id) userMessageArticle.dataset.messageId = data.user_message_id;
             if (data.assistant_message_id) waitingMessage.dataset.messageId = data.assistant_message_id;
             if (data.conversation_id && currentConversationId === requestConversationId) {
               currentConversationId = data.conversation_id;
+              setConversationLocation(currentConversationId);
               if (currentUser) localStorage.setItem(`shiju_conversation_${currentUser.id}`, currentConversationId);
             }
           }
           if (event === "assistant.delta") { reply += data.text || ""; replaceMessage(waitingMessage, reply); }
           if (event === "tool.started") {
             updateToolActivity(waitingMessage, data.tool_call_id, data.name, "running");
-            agentStatus.textContent = `正在使用工具：${toolDisplayName(data.name)}`;
+            agentStatus.textContent = "正在判断意图";
             agentStatus.classList.add("is-working");
           }
           if (event === "tool.completed") {
@@ -1934,7 +2342,7 @@ chatForm.addEventListener("submit", async (event) => {
             updateToolActivity(waitingMessage, data.tool_call_id, data.name, completed, data.output);
             agentStatus.textContent = completed === "failed" ? "工具调用失败，正在处理" : "工具结果已返回";
             agentStatus.classList.remove("is-working");
-            if ((data.name === "prepare_generation" || data.name === "prepare_rewrite") && data.output?.ok) {
+            if ((data.name === "prepare_generation" || data.name === "prepare_partial_generation") && data.output?.ok) {
                appendProposalEditor(data.output.result, waitingMessage);
             }
           }
@@ -1948,6 +2356,7 @@ chatForm.addEventListener("submit", async (event) => {
     const stillViewingRequest = currentConversationId === requestConversationId || currentConversationId === responseConversationId;
     if (stillViewingRequest) {
       currentConversationId = responseConversationId;
+      if (currentConversationId) setConversationLocation(currentConversationId);
       if (currentConversationId && currentUser) localStorage.setItem(`shiju_conversation_${currentUser.id}`, currentConversationId);
       replaceMessage(waitingMessage, reply || "暂时无法回复。", reply ? "" : "error");
       agentStatus.textContent = "已连接"; agentStatus.classList.remove("is-working");
@@ -1956,8 +2365,14 @@ chatForm.addEventListener("submit", async (event) => {
     await loadConversations();
   } catch (error) {
     if (error.name === "AbortError") {
-      replaceMessage(waitingMessage, "发送已取消。", "error");
-      agentStatus.textContent = "已取消";
+      if (activeChatStopMode === "pause") {
+        replaceMessage(waitingMessage, reply || "已暂停输出。", reply ? "" : "error");
+        appendAssistantContinueButton(waitingMessage);
+        agentStatus.textContent = "已暂停";
+      } else {
+        replaceMessage(waitingMessage, "发送已取消。", "error");
+        agentStatus.textContent = "已取消";
+      }
       agentStatus.classList.remove("is-working");
       return;
     }
@@ -1966,18 +2381,31 @@ chatForm.addEventListener("submit", async (event) => {
   } finally {
     if (activeChatRequest === requestController) {
       activeChatRequest = null;
+      if (activeAssistantMessage === waitingMessage) activeAssistantMessage = null;
       setChatBusy(false);
       chatInput.focus();
     }
   }
 });
 
-chatCancel?.addEventListener("click", () => {
+function pauseActiveChat() {
   if (!activeChatRequest) return;
+  activeChatStopMode = "pause";
+  if (activeTurnId) {
+    fetch(`/v1/agent/turns/${encodeURIComponent(activeTurnId)}/pause`, { method: "POST", headers: authHeaders() }).catch(() => {});
+  }
   activeChatRequest.abort();
-  agentStatus.textContent = "已取消";
+  agentStatus.textContent = "正在暂停";
   agentStatus.classList.remove("is-working");
+}
+
+chatSubmit?.addEventListener("click", (event) => {
+  if (!chatBusy) return;
+  event.preventDefault();
+  pauseActiveChat();
 });
+
+chatCancel?.addEventListener("click", pauseActiveChat);
 
 chatInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -1992,6 +2420,15 @@ chatInput.addEventListener("input", () => {
 });
 
 chatThread.addEventListener("click", (event) => {
+  const continueButton = event.target.closest("[data-continue-message]");
+  if (continueButton) {
+    if (chatBusy) return;
+    resumeTurnId = continueButton.closest("[data-turn-id]")?.dataset.turnId || null;
+    chatInput.value = "继续完成刚才的回答。";
+    chatInput.dispatchEvent(new Event("input"));
+    chatForm.requestSubmit();
+    return;
+  }
   const copy = event.target.closest("[data-copy-message]");
   if (copy) {
     const article = copy.closest("[data-message-id]");
@@ -2003,11 +2440,27 @@ chatThread.addEventListener("click", (event) => {
   }
   const versionStep = event.target.closest("[data-version-step]");
   if (versionStep) {
+    if (chatBusy) {
+      announce("正在生成回复，完成后才能切换分支。");
+      return;
+    }
     const article = versionStep.closest("[data-message-id]");
     if (!article) return;
     const versions = JSON.parse(article.dataset.messageVersions || "[]");
     const current = Number(article.dataset.versionIndex || 0);
     const next = Math.max(0, Math.min(versions.length - 1, current + Number(versionStep.dataset.versionStep || 0)));
+    const siblings = JSON.parse(article.dataset.messageSiblings || "[]");
+    const sibling = siblings[next];
+    if (sibling?.id && currentConversationId) {
+      apiFetch(`/v1/conversations/${encodeURIComponent(currentConversationId)}/messages/${encodeURIComponent(sibling.id)}/activate-branch`, { method: "POST" })
+        .then(() => openConversation(currentConversationId))
+        .catch((error) => announce(`切换分支失败：${error.message}`));
+      return;
+    }
+    if (siblings.length) {
+      announce("该分支暂时无法打开，请刷新对话后重试。");
+      return;
+    }
     article.dataset.versionIndex = String(next);
     updateMessageVersionControls(article);
     return;
@@ -2087,6 +2540,7 @@ document.querySelector("#new-chat").addEventListener("click", () => {
   activeChatRequest = null;
   chatSessionId = null;
   currentConversationId = null;
+  setConversationLocation(null);
   editingMessageId = null;
   setChatTitle();
   closeProsodyInspector();
@@ -2123,6 +2577,23 @@ function beginConversationRename(row, conversationId) {
     if (event.key === "Enter") { event.preventDefault(); save.click(); }
     if (event.key === "Escape") { event.preventDefault(); cancel.click(); }
   });
+}
+
+function findBranchIdForMessage(messageId) {
+  if (!messageId || !Array.isArray(window.currentConversationBranches)) return null;
+  const branch = window.currentConversationBranches.find((item) => item.root_message_id === messageId && item.id !== window.currentActiveBranchId)
+    || window.currentConversationBranches.find((item) => item.root_message_id === messageId);
+  return branch?.id || null;
+}
+
+function findAlternateBranchId() {
+  if (!Array.isArray(window.currentConversationBranches)) return null;
+  return window.currentConversationBranches.find((item) => item.id !== window.currentActiveBranchId)?.id || null;
+}
+
+function isBranchRootMessage(messageId) {
+  return Boolean(messageId && Array.isArray(window.currentConversationBranches)
+    && window.currentConversationBranches.some((item) => item.root_message_id === messageId));
 }
 
 function cancelConversationRename(row) {

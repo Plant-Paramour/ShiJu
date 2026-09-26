@@ -42,7 +42,10 @@ def build_rewrite_messages(
                 f"{PLAN_MARKER}一句修改思路，单行、不超过80字并以句号结束。\n"
                 f"{REWRITE_MARKER}\n"
                 f"按原句序输出完整的 {len(poem.lines)} 句诗稿\n\n"
-                f"【目标句】\n{target_text}\n\n"
+                "【目标句：负面样本】\n"
+                "以下是原诗中需要替换的句子。不得原样复述，也不要只做无意义的同义替换；"
+                "应根据改写要求生成有实质变化的新句。\n"
+                f"{target_text}\n\n"
                 f"【逐字保留句】\n{fixed_text}\n\n"
                 f"【完整原诗】\n{poem.source}"
             ),

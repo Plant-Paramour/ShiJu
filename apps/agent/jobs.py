@@ -11,6 +11,8 @@ class PoetryJobs(Protocol):
 
     def submit_rewrite(self, payload: Mapping[str, Any], idempotency_key: str) -> dict: ...
 
+    def submit_partial_generate(self, payload: Mapping[str, Any], idempotency_key: str) -> dict: ...
+
     def get_job(self, job_id: str) -> dict: ...
 
 
@@ -45,6 +47,12 @@ class HttpPoetryJobs:
             "POST",
             "/v1/poetry/jobs/rewrite",
             payload,
+            idempotency_key=idempotency_key,
+        )
+
+    def submit_partial_generate(self, payload: Mapping[str, Any], idempotency_key: str) -> dict:
+        return self._request(
+            "POST", "/v1/poetry/jobs/partial-generate", payload,
             idempotency_key=idempotency_key,
         )
 

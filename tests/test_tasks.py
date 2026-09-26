@@ -112,7 +112,7 @@ def test_hanpai_task_composes_format_season_prosody_and_rhyme_options(tmp_path):
     assert "允许使用邻位平声完成拗救" in prompt
     assert "句尾不得出现三连平或三连仄" in prompt
     assert "采用 BAA 式" in prompt
-    assert "临时插入顿号以提示节奏" in prompt
+    assert "正文中不得输出顿号、逗号、句号等句内标点" in prompt
     transformed = runtime.process_output(
         "规划、保留\n[title]汉俳·秋思\n[content]寒蝉、声渐远\n学姐、去何、方云鬓"
     )

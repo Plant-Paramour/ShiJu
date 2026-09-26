@@ -8,10 +8,12 @@ from .settings import ApiSettings
 from .rate_limit import RequestRateLimiter
 from .user_repository import UserRepository
 from .forum_repository import ForumRepository
+from .event_repository import EventRepository, TurnController
 
 
 def create_app(settings: ApiSettings | None = None, *, agent_service=None):
     from fastapi import FastAPI, Request
+    from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import JSONResponse, RedirectResponse
     from fastapi.staticfiles import StaticFiles
 
@@ -31,10 +33,19 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
     active = settings or ApiSettings.from_env()
     database = Database(active.database_url or active.database_path)
     database.initialize()
+    EventRepository(database).interrupt_unfinished_turns()
     users = UserRepository(database)
     users.seed_defaults()
+    users.migrate_legacy_tree()
 
     app = FastAPI(title="诗矩工具服务", version="0.2.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+    )
     # 兼容当前 FastAPI/Starlette 版本，避免依赖已移除的 add_event_handler。
     app.router.on_shutdown.append(database.close)
     app.state.settings = active
@@ -46,8 +57,10 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
     app.state.jobs = JobRepository(database)
     app.state.users = users
     app.state.forum = ForumRepository(database)
+    app.state.turn_controller = TurnController()
     app.state.gpu_provider = ManualGpuProvider()
     project_root = Path(__file__).resolve().parents[2]
+    app.state.project_root = project_root
     if agent_service is not None:
         app.state.agent_service = agent_service
     elif active.web_agent_enabled:
@@ -65,7 +78,7 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
         limit = 2 * 1024 * 1024 if request.url.path == "/v1/profile/me/avatar" else active.max_request_bytes
         if length and int(length) > limit:
             return JSONResponse(status_code=413, content={"detail": "request too large"})
-        if request.url.path in {"/v1/agent/chat", "/v1/agent/chat/stream", "/v1/poetry/jobs/generate", "/v1/poetry/jobs/rewrite"}:
+        if request.url.path in {"/v1/agent/chat", "/v1/agent/chat/stream", "/v1/poetry/jobs/generate", "/v1/poetry/jobs/rewrite", "/v1/poetry/jobs/partial-generate"}:
             identity = request.headers.get("authorization", "") or (request.client.host if request.client else "unknown")
             if not app.state.rate_limiter.acquire(identity):
                 return JSONResponse(status_code=429, content={"detail": "请求过于频繁或当前 Agent 已达到并发/额度上限"})

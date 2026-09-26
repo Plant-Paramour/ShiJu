@@ -1,0 +1,98 @@
+- generic [ref=e1]:
+  - link "跳到主要内容" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - link "诗矩首页" [ref=e5] [cursor=pointer]:
+        - /url: "#home"
+        - generic [ref=e6]: 诗矩
+        - generic [aria-hidden] [ref=e7]: 矩
+      - navigation "主导航" [ref=e8]:
+        - link "首页" [ref=e9] [cursor=pointer]:
+          - /url: "#home"
+        - link "AI 对话" [ref=e10] [cursor=pointer]:
+          - /url: "#chat"
+        - link "格律检测" [ref=e11] [cursor=pointer]:
+          - /url: "#prosody"
+        - link "佳句检索" [ref=e12] [cursor=pointer]:
+          - /url: "#sentence-search"
+        - link "诗友论坛" [ref=e13] [cursor=pointer]:
+          - /url: "#forum"
+      - button "打开用户菜单" [ref=e15] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e16]: 诗
+  - main [ref=e17]:
+    - region [ref=e99]:
+      - region [ref=e100]:
+        - generic [ref=e103]:
+          - generic [ref=e104]:
+            - paragraph [ref=e105]: 中文诗词创作空间
+            - heading "诗矩" [level=1] [ref=e106]
+            - paragraph [ref=e107]: 〔产品核心介绍文案占位〕
+            - paragraph [ref=e108]: 〔一句简短的产品价值说明占位〕
+            - generic [ref=e109]:
+              - link "进入对话" [ref=e110] [cursor=pointer]:
+                - /url: "#chat"
+              - link "查看格律工具" [ref=e111] [cursor=pointer]:
+                - /url: "#prosody"
+          - complementary [ref=e112]:
+            - generic [ref=e113]:
+              - generic [ref=e114]:
+                - paragraph [ref=e115]: 欢迎回来
+                - heading "登录账户" [level=2] [ref=e116]
+              - generic [aria-hidden] [ref=e117]: 入
+            - generic [ref=e118]:
+              - generic [ref=e119]:
+                - generic [ref=e120]: 用户名
+                - textbox "用户名" [active] [ref=e121]:
+                  - /placeholder: 请输入用户名
+              - generic [ref=e122]:
+                - generic [ref=e123]: 密码
+                - textbox "密码" [ref=e124]:
+                  - /placeholder: 请输入密码
+              - button "登录" [ref=e125] [cursor=pointer]
+              - status [ref=e126]
+              - paragraph [ref=e127]:
+                - text: 还没有账户？
+                - button "注册账号" [ref=e128] [cursor=pointer]
+      - region [ref=e129]:
+        - generic [ref=e130]:
+          - generic [ref=e131]:
+            - paragraph [ref=e132]: 关于诗矩
+            - heading "〔产品介绍标题占位〕" [level=2] [ref=e133]
+            - paragraph [ref=e134]: 〔此处后续补充产品缘起、使用对象与核心能力。当前仅用于确认信息层级与版式节奏。〕
+          - generic [ref=e135]:
+            - article [ref=e136]:
+              - text: 一
+              - heading "〔能力一占位〕" [level=3] [ref=e137]
+              - paragraph [ref=e138]: 〔简短说明占位〕
+            - article [ref=e139]:
+              - text: 二
+              - heading "〔能力二占位〕" [level=3] [ref=e140]
+              - paragraph [ref=e141]: 〔简短说明占位〕
+            - article [ref=e142]:
+              - text: 三
+              - heading "〔能力三占位〕" [level=3] [ref=e143]
+              - paragraph [ref=e144]: 〔简短说明占位〕
+      - region [ref=e145]:
+        - generic [ref=e146]:
+          - generic [ref=e147]:
+            - paragraph [ref=e148]: 先搭骨架，再添血肉
+            - heading "四处入口，一套气韵" [level=2] [ref=e149]
+            - paragraph [ref=e150]: 当前版本先统一导航、页面密度与交互语言，业务能力将在后续迭代中逐步接入。
+          - generic [ref=e151]:
+            - link "01 AI 对话 创作与推敲的主界面" [ref=e152] [cursor=pointer]:
+              - /url: "#chat"
+              - generic [ref=e153]: "01"
+              - strong [ref=e154]: AI 对话
+              - generic [ref=e155]: 创作与推敲的主界面
+            - link "02 格律检测 保留现有检测能力" [ref=e156] [cursor=pointer]:
+              - /url: "#prosody"
+              - generic [ref=e157]: "02"
+              - strong [ref=e158]: 格律检测
+              - generic [ref=e159]: 保留现有检测能力
+            - link "03 诗友论坛 交流、赏析与讨论" [ref=e160] [cursor=pointer]:
+              - /url: "#forum"
+              - generic [ref=e161]: "03"
+              - strong [ref=e162]: 诗友论坛
+              - generic [ref=e163]: 交流、赏析与讨论
+  - status

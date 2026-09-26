@@ -3,10 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <base href="/web/prosody-checker/">
   <meta name="description" content="诗矩：面向中文诗词创作、对话与格律检查的前端原型。">
   <title>诗矩 · 中文诗词创作空间</title>
   <link rel="stylesheet" href="./han/han-scoped.css">
-  <link rel="stylesheet" href="./styles.css?v=42">
+  <link rel="stylesheet" href="./styles.css?v=46">
 </head>
 <body data-han-scope data-theme="song" data-han-intensity="1" data-han-accent-families="vermilion">
   <a class="han-skip-link" href="#main-content">跳到主要内容</a>
@@ -188,7 +189,6 @@
           <nav class="conversation-list" id="conversation-list" aria-label="历史对话">
             <p>登录后查看历史对话</p>
           </nav>
-          <div class="chat-sidebar__footer" id="chat-user-status">未登录</div>
         </aside>
 
         <div class="chat-main">
@@ -220,6 +220,7 @@
             <div class="chat-composer__toolbar">
               <label class="chat-model-picker" title="选择模型"><select id="chat-model" aria-label="选择模型"><option value="deepseek-v3.2-guiji-cc">deepseek-v3.2</option><option value="Qwen/Qwen3-Omni-30B-A3B-Instruct">Qwen3</option></select></label>
               <div class="chat-composer__actions">
+                <button class="chat-prompt-button" type="button" id="chat-prompt-button" title="打开创作提示词" aria-label="打开创作提示词"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h14v15H5z"></path><path d="M8.5 8h7M8.5 12h7M8.5 16h4"></path></svg></button>
                 <label class="chat-attach-button" for="chat-attachment" title="添加图片" aria-label="添加图片"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="8.5" cy="9" r="1.5"></circle><path d="m4.5 17 4.2-4.2 3.2-2.2 5.4 5.2"></path></svg></label>
                 <input id="chat-attachment" type="file" accept="image/jpeg,image/png,image/webp" hidden>
                 <button class="chat-cancel-button" type="button" id="chat-cancel" title="取消发送" aria-label="取消发送" hidden>取消</button>
@@ -498,9 +499,8 @@
     </form>
   </dialog>
 
-  <footer class="site-footer"><span>诗矩 · 前端框架预览</span><span>产品文案与业务流程将在后续迭代中完善</span></footer>
   <div id="site-status" class="site-status" role="status" aria-live="polite"></div>
-  <script type="module" src="./site.js?v=47"></script>
+  <script type="module" src="./site.js?v=53"></script>
   <script type="module" src="./app.js?v=11"></script>
   <script type="module" src="./sentence-search.js?v=9"></script>
 </body>

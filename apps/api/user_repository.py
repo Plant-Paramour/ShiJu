@@ -41,6 +41,24 @@ class UserRepository:
                     (developer_username,),
                 )
 
+    def migrate_legacy_tree(self) -> None:
+        """为旧线性对话补齐父链，并建立可继续使用的主分支。"""
+        with self.database.connect() as connection:
+            conversations = connection.execute("SELECT id FROM conversations").fetchall()
+            for conversation in conversations:
+                conversation_id = conversation[0]
+                branch = connection.execute("SELECT id FROM conversation_branches WHERE conversation_id=? LIMIT 1", (conversation_id,)).fetchone()
+                if branch is not None:
+                    continue
+                rows = connection.execute("SELECT id,parent_message_id FROM messages WHERE conversation_id=? ORDER BY created_at,id", (conversation_id,)).fetchall()
+                previous = None
+                for row in rows:
+                    if row[1] is None and previous is not None:
+                        connection.execute("UPDATE messages SET parent_message_id=?,updated_at=COALESCE(updated_at,created_at) WHERE id=?", (previous, row[0]))
+                    previous = row[0]
+                now = time.time()
+                connection.execute("INSERT INTO conversation_branches(id,conversation_id,head_message_id,title,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", (str(uuid.uuid4()), conversation_id, previous, "主线", 1, now, now))
+
     @staticmethod
     def _user(row) -> dict[str, Any]:
         return {
@@ -156,6 +174,10 @@ class UserRepository:
                 "INSERT INTO conversations(id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
                 (conversation_id, user_id, title[:15] or "新建对话", now, now),
             )
+            connection.execute(
+                "INSERT INTO conversation_branches(id, conversation_id, root_message_id, head_message_id, title, is_active, created_at, updated_at) VALUES (?, ?, NULL, NULL, ?, 1, ?, ?)",
+                (str(uuid.uuid4()), conversation_id, "主线", now, now),
+            )
         return {"id": conversation_id, "title": title[:15] or "新建对话", "created_at": now, "updated_at": now}
 
     def get_conversation(self, conversation_id: str, user_id: str) -> dict[str, Any] | None:
@@ -176,6 +198,7 @@ class UserRepository:
         status: str = "completed",
         job_id: str | None = None,
         parent_message_id: str | None = None,
+        turn_id: str | None = None,
     ) -> dict[str, Any]:
         now = time.time()
         message_id = str(uuid.uuid4())
@@ -184,20 +207,24 @@ class UserRepository:
             version_number = 1
             if parent_message_id:
                 parent = connection.execute(
-                    "SELECT version_group_id, COALESCE(MAX(version_number), 1) AS version_number FROM messages WHERE id = ? AND conversation_id = ?",
+                    "SELECT id, role, version_group_id, COALESCE(MAX(version_number), 1) AS version_number FROM messages WHERE id = ? AND conversation_id = ?",
                     (parent_message_id, conversation_id),
                 ).fetchone()
+                if parent is None:
+                    raise ValueError("parent message not found in conversation")
                 archived = connection.execute(
                     "SELECT version_group_id, MAX(version_number) AS version_number FROM message_versions WHERE id = ? AND conversation_id = ? GROUP BY version_group_id",
                     (parent_message_id, conversation_id),
                 ).fetchone()
-                source = parent or archived
+                # A version group represents edited messages only. Normal chat
+                # turns also have a parent, but must start a new group.
+                source = parent if parent and parent["role"] == role == "user" else None
                 if source:
                     version_group_id = source["version_group_id"] or parent_message_id
                     version_number = int(source["version_number"] or 1) + 1
             inserted = connection.execute(
-                "INSERT INTO messages(id, conversation_id, role, content, created_at, status, job_id, version_group_id, version_number) SELECT ?, id, ?, ?, ?, ?, ?, ?, ? FROM conversations WHERE id = ? AND user_id = ?",
-                (message_id, role, content, now, status, job_id, version_group_id, version_number, conversation_id, user_id),
+                "INSERT INTO messages(id, conversation_id, role, content, created_at, status, job_id, version_group_id, version_number, parent_message_id, turn_id, updated_at) SELECT ?, id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM conversations WHERE id = ? AND user_id = ?",
+                (message_id, role, content, now, status, job_id, version_group_id, version_number, parent_message_id, turn_id, now, conversation_id, user_id),
             )
             if inserted.rowcount != 1:
                 raise ValueError("conversation not found")
@@ -205,7 +232,7 @@ class UserRepository:
                 "UPDATE conversations SET updated_at = ?, title = CASE WHEN title = '新建对话' AND ? = 'user' THEN substr(?, 1, 15) ELSE title END WHERE id = ? AND user_id = ?",
                 (now, role, content, conversation_id, user_id),
             )
-            if parent_message_id:
+            if version_group_id != message_id:
                 connection.execute(
                     "INSERT OR IGNORE INTO message_versions(id, conversation_id, version_group_id, version_number, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (str(uuid.uuid4()), conversation_id, version_group_id, version_number, role, content, now),
@@ -219,6 +246,9 @@ class UserRepository:
             "created_at": now,
             "version_group_id": version_group_id,
             "version_number": version_number,
+            "parent_message_id": parent_message_id,
+            "turn_id": turn_id,
+            "updated_at": now,
         }
 
     def update_message(
@@ -236,12 +266,12 @@ class UserRepository:
             updated = connection.execute(
                 """
                 UPDATE messages
-                SET content = ?, status = ?, job_id = ?
+                SET content = ?, status = ?, job_id = ?, updated_at = ?
                 WHERE id = ? AND conversation_id IN (
                     SELECT id FROM conversations WHERE id = ? AND user_id = ?
                 )
                 """,
-                (content, status, job_id, message_id, conversation_id, user_id),
+                (content, status, job_id, now, message_id, conversation_id, user_id),
             )
             if updated.rowcount != 1:
                 raise ValueError("message not found")
@@ -289,13 +319,14 @@ class UserRepository:
     def list_messages(self, conversation_id: str, user_id: str) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT m.id, m.role, m.content, m.status, m.job_id, m.created_at, m.version_group_id, m.version_number FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND c.user_id = ? ORDER BY m.created_at, m.id",
+                "SELECT m.id, m.role, m.content, m.status, m.job_id, m.created_at, m.updated_at, m.version_group_id, m.version_number, m.parent_message_id, m.turn_id FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND c.user_id = ? ORDER BY m.created_at, m.id",
                 (conversation_id, user_id),
             ).fetchall()
             versions = connection.execute(
                 "SELECT version_group_id, version_number, role, content, created_at FROM message_versions WHERE conversation_id = ? ORDER BY version_group_id, version_number",
                 (conversation_id,),
             ).fetchall()
+            branches = [dict(row) for row in connection.execute("SELECT id,root_message_id,head_message_id FROM conversation_branches WHERE conversation_id=?", (conversation_id,)).fetchall()]
         by_group: dict[str, list[dict[str, Any]]] = {}
         for version in versions:
             item = dict(version)
@@ -304,13 +335,178 @@ class UserRepository:
         for row in rows:
             item = dict(row)
             group = item.get("version_group_id") or item["id"]
-            history = list(by_group.get(group, []))
+            # A polluted legacy group may contain the assistant reply that was
+            # created after a user message. Versions are role-local; never show
+            # an assistant row as a user edit version.
+            history = [version for version in by_group.get(group, []) if version["role"] == item["role"]]
             if not any(v["version_number"] == item.get("version_number") for v in history):
-                history.append({"version_group_id": group, "version_number": item.get("version_number", 1), "role": item["role"], "content": item["content"], "created_at": item["created_at"]})
+                if item["role"] == "user":
+                    history.append({"version_group_id": group, "version_number": item.get("version_number", 1), "role": item["role"], "content": item["content"], "created_at": item["created_at"]})
             history.sort(key=lambda v: v["version_number"])
             item["versions"] = history if item["role"] == "user" else []
             result.append(item)
+        by_id = {item["id"]: item for item in result}
+        branch_members: dict[str, str] = {}
+        for branch in branches:
+            current_id = branch.get("head_message_id")
+            visited: set[str] = set()
+            while current_id and current_id not in visited:
+                visited.add(current_id)
+                current = by_id.get(current_id)
+                if current is None:
+                    break
+                if current_id == branch.get("root_message_id") or current_id not in branch_members:
+                    branch_members[current_id] = branch["id"]
+                current_id = current.get("parent_message_id")
+        by_parent: dict[tuple[str | None, str], list[dict[str, Any]]] = {}
+        for item in result:
+            by_parent.setdefault((item.get("parent_message_id"), item["role"]), []).append(item)
+        for item in result:
+            siblings = by_parent.get((item.get("parent_message_id"), item["role"]), [])
+            item["branch_id"] = branch_members.get(item["id"])
+            item["siblings"] = [{"id": sibling["id"], "content": sibling["content"], "created_at": sibling["created_at"], "branch_id": branch_members.get(sibling["id"])} for sibling in siblings]
         return result
+
+    def get_message(self, message_id: str, conversation_id: str, user_id: str) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT m.* FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE m.id=? AND m.conversation_id=? AND c.user_id=?",
+                (message_id, conversation_id, user_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def message_exists(self, message_id: str | None, conversation_id: str) -> bool:
+        if not message_id:
+            return False
+        with self.database.connect() as connection:
+            return connection.execute(
+                "SELECT 1 FROM messages WHERE id=? AND conversation_id=?", (message_id, conversation_id)
+            ).fetchone() is not None
+
+    def resolve_conversation_access(self, conversation_id: str, actor_id: str) -> str | None:
+        """返回会话所有者；developer 可读取任意未归档会话。"""
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT c.user_id FROM conversations c WHERE c.id=? AND c.deleted_at IS NULL AND (c.user_id=? OR EXISTS (SELECT 1 FROM users u WHERE u.id=? AND u.role='developer'))",
+                (conversation_id, actor_id, actor_id),
+            ).fetchone()
+        return row[0] if row else None
+
+    def list_message_tree(self, conversation_id: str, user_id: str) -> list[dict[str, Any]]:
+        messages = self.list_messages(conversation_id, user_id)
+        children: dict[str | None, list[str]] = {}
+        for message in messages:
+            children.setdefault(message.get("parent_message_id"), []).append(message["id"])
+        for message in messages:
+            message["children_ids"] = children.get(message["id"], [])
+            message["depth"] = 0
+            parent_id = message.get("parent_message_id")
+            seen: set[str] = set()
+            while parent_id and parent_id not in seen:
+                seen.add(parent_id)
+                parent = next((item for item in messages if item["id"] == parent_id), None)
+                if parent is None:
+                    message["tree_error"] = "missing_parent"
+                    break
+                message["depth"] += 1
+                parent_id = parent.get("parent_message_id")
+            if parent_id in seen:
+                message["tree_error"] = "cycle"
+        return messages
+
+    def create_branch(self, conversation_id: str, user_id: str, *, root_message_id: str | None = None, head_message_id: str | None = None, title: str = "主线", activate: bool = True) -> dict[str, Any]:
+        branch_id = str(uuid.uuid4())
+        now = time.time()
+        with self.database.connect() as connection:
+            if connection.execute("SELECT 1 FROM conversations WHERE id=? AND user_id=? AND deleted_at IS NULL", (conversation_id, user_id)).fetchone() is None:
+                raise ValueError("conversation not found")
+            if activate:
+                connection.execute("UPDATE conversation_branches SET is_active=0 WHERE conversation_id=?", (conversation_id,))
+            connection.execute(
+                "INSERT INTO conversation_branches(id,conversation_id,root_message_id,head_message_id,title,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                (branch_id, conversation_id, root_message_id, head_message_id, title[:80] or "主线", 1 if activate else 0, now, now),
+            )
+        return {"id": branch_id, "conversation_id": conversation_id, "root_message_id": root_message_id, "head_message_id": head_message_id, "title": title[:80] or "主线", "is_active": activate, "created_at": now, "updated_at": now}
+
+    def list_branches(self, conversation_id: str, user_id: str) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT b.* FROM conversation_branches b JOIN conversations c ON c.id=b.conversation_id WHERE b.conversation_id=? AND c.user_id=? ORDER BY b.created_at,b.id", (conversation_id, user_id)).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_active_branch(self, conversation_id: str, user_id: str) -> dict[str, Any]:
+        branches = self.list_branches(conversation_id, user_id)
+        active = next((item for item in branches if item["is_active"]), None)
+        if active:
+            return active
+        return self.create_branch(conversation_id, user_id)
+
+    def ensure_branch_for_message(self, conversation_id: str, user_id: str, message_id: str | None = None) -> dict[str, Any]:
+        branch = self.get_active_branch(conversation_id, user_id)
+        if message_id:
+            with self.database.connect() as connection:
+                row = connection.execute("SELECT id FROM messages WHERE id=? AND conversation_id=?", (message_id, conversation_id)).fetchone()
+            if row is None:
+                raise ValueError("message not found")
+            branch = self.create_branch(conversation_id, user_id, root_message_id=message_id, head_message_id=message_id, title="编辑分支")
+        return branch
+
+    def list_path_messages(self, conversation_id: str, user_id: str, head_message_id: str | None = None) -> list[dict[str, Any]]:
+        messages = self.list_messages(conversation_id, user_id)
+        by_id = {item["id"]: item for item in messages}
+        if head_message_id is None:
+            return []
+        path = []
+        current = by_id.get(head_message_id)
+        while current:
+            path.append(current)
+            current = by_id.get(current.get("parent_message_id"))
+        path.reverse()
+        return path
+
+    def activate_branch(self, branch_id: str, conversation_id: str, user_id: str) -> bool:
+        with self.database.connect() as connection:
+            valid = connection.execute("SELECT 1 FROM conversation_branches b JOIN conversations c ON c.id=b.conversation_id WHERE b.id=? AND b.conversation_id=? AND c.user_id=?", (branch_id, conversation_id, user_id)).fetchone()
+            if not valid:
+                return False
+            connection.execute("UPDATE conversation_branches SET is_active=0 WHERE conversation_id=?", (conversation_id,))
+            connection.execute("UPDATE conversation_branches SET is_active=1,updated_at=? WHERE id=?", (time.time(), branch_id))
+        return True
+
+    def activate_branch_for_message(self, message_id: str, conversation_id: str, user_id: str) -> str | None:
+        """根据目标消息所在的分支激活分支，避免前端使用过期 branch_id。"""
+        branches = self.list_branches(conversation_id, user_id)
+        messages = self.list_messages(conversation_id, user_id)
+        by_id = {item["id"]: item for item in messages}
+        active = next((item for item in branches if item["is_active"]), None)
+        candidates = []
+        for branch in branches:
+            current_id = branch.get("head_message_id")
+            visited = set()
+            while current_id and current_id not in visited:
+                visited.add(current_id)
+                if current_id == message_id:
+                    candidates.append(branch)
+                    break
+                current = by_id.get(current_id)
+                if current is None:
+                    break
+                current_id = current.get("parent_message_id")
+            if branch.get("root_message_id") == message_id and branch not in candidates:
+                candidates.append(branch)
+        candidate = next((item for item in candidates if not active or item["id"] != active["id"]), None)
+        if candidate is None:
+            candidate = next(iter(candidates), None)
+        if candidate is None or not self.activate_branch(candidate["id"], conversation_id, user_id):
+            return None
+        return candidate["id"]
+
+    def update_branch_head(self, branch_id: str, message_id: str) -> None:
+        with self.database.connect() as connection:
+            connection.execute("UPDATE conversation_branches SET head_message_id=?,updated_at=? WHERE id=?", (message_id, time.time(), branch_id))
+
+    def update_branch_root_if_empty(self, branch_id: str, message_id: str) -> None:
+        with self.database.connect() as connection:
+            connection.execute("UPDATE conversation_branches SET root_message_id=? WHERE id=? AND root_message_id IS NULL", (message_id, branch_id))
 
     def save_poem(self, user_id: str, job_id: str, job_request: dict[str, Any], result: dict[str, Any]) -> None:
         candidates = result.get("candidates") or []

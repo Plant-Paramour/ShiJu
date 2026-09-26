@@ -28,6 +28,20 @@ class ScriptedModel:
         return self.responses.pop(0)
 
 
+def test_task_classifier_is_given_only_current_message_and_injected_before_tools(tmp_path):
+    root = __import__("pathlib").Path(__file__).resolve().parents[1]
+    classifier = ScriptedModel([{"role": "assistant", "content": '{"task_type":"partial_generate"}'}])
+    main = ScriptedModel([{"role": "assistant", "content": "已识别为部分生成。"}])
+    session = AgentSession(main, AgentToolbox(root, FakeJobs()), classifier_model=classifier)
+
+    assert session.respond("给我颈联，请补成七律") == "已识别为部分生成。"
+    assert classifier.calls[0][0][-1] == {"role": "user", "content": "给我颈联，请补成七律"}
+    injected = main.calls[0][0][-1]
+    assert injected["role"] == "system"
+    assert "partial_generate" in injected["content"]
+    assert "prepare_partial_generation" in {item["function"]["name"] for item in main.calls[0][1]}
+
+
 def test_agent_executes_tool_and_returns_follow_up_text(tmp_path):
     from pathlib import Path
 

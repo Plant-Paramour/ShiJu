@@ -22,7 +22,7 @@ def create_session(settings: AgentSettings | None = None) -> AgentSession:
     )
     project_root = Path(__file__).resolve().parents[2]
     toolbox = AgentToolbox(project_root, jobs)
-    return AgentSession(model, toolbox, max_tool_rounds=active.max_tool_rounds)
+    return AgentSession(model, toolbox, max_tool_rounds=active.max_tool_rounds, classifier_model=model)
 
 
 def main() -> None:

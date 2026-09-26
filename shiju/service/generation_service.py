@@ -14,6 +14,11 @@ class GenerationService:
     def execute(self, kind: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         if kind == JobKind.GENERATE.value:
             return self._engine.generate_poem(GeneratePoemRequest.from_mapping(payload), on_candidate_event=self._event_callback)
-        if kind == JobKind.REWRITE.value:
+        if kind in {JobKind.PARTIAL_GENERATE.value, JobKind.REWRITE.value}:
+            if not str(payload.get("original_text") or "").strip():
+                return self._engine.generate_poem(
+                    GeneratePoemRequest.from_mapping(payload),
+                    on_candidate_event=self._event_callback,
+                )
             return self._engine.rewrite_poem(RewritePoemRequest.from_mapping(payload), on_candidate_event=self._event_callback)
         raise ValueError(f"不支持的任务类型: {kind}")

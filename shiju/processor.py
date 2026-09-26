@@ -104,19 +104,16 @@ class RelationalSeparatorPolicy:
 
 
 class NewlineSeparatorPolicy:
-    """用于内部强制顿号、行间只换行的诗体。"""
+    """用于行间只换行、句内不生成标点的诗体。"""
 
     def __init__(self, tokenizer: TokenizerLike):
         self._newline = _exact_token_ids(tokenizer, ("\n",))
-        self._caesura = _exact_token_ids(tokenizer, ("、",))
 
     @property
     def newline_tokens(self) -> set[int]:
         return set(self._newline)
 
     def allowed_tokens(self, state: GenerationState, constraint_context) -> set[int]:
-        if state.step is StepKind.CAESURA:
-            return set(self._caesura)
         if state.step is StepKind.NEWLINE:
             return set(self._newline)
         return set()

@@ -39,9 +39,11 @@ def test_hanpai_profile_supports_both_line_patterns(line_lengths, expected_break
     assert [set(line.break_positions) for line in profile.layout.lines] == list(
         expected_breaks
     )
-    assert [set(line.caesura_positions) for line in profile.layout.lines] == list(
-        expected_breaks
-    )
+    assert [set(line.caesura_positions) for line in profile.layout.lines] == [
+        set(),
+        set(),
+        set(),
+    ]
     assert all(line.stanza_end for line in profile.layout.lines)
 
 
@@ -55,18 +57,15 @@ def test_hanpai_candidate_patterns_cannot_cross_five_and_seven_char_breaks():
 
     assert {item.length for item in controller.allowed_patterns()} == {1, 2}
     controller.advance("山雨")
-    assert controller.snapshot().step is StepKind.CAESURA
-    controller.advance("、")
+    assert controller.snapshot().step is StepKind.TEXT
     assert {item.length for item in controller.allowed_patterns()} == {1, 2, 3}
     controller.advance("山雨山\n")
     assert {item.length for item in controller.allowed_patterns()} == {1, 2}
     controller.advance("山雨")
-    assert controller.snapshot().step is StepKind.CAESURA
-    controller.advance("、")
+    assert controller.snapshot().step is StepKind.TEXT
     assert {item.length for item in controller.allowed_patterns()} == {1, 2}
     controller.advance("山雨")
-    assert controller.snapshot().step is StepKind.CAESURA
-    controller.advance("、")
+    assert controller.snapshot().step is StepKind.TEXT
     assert {item.length for item in controller.allowed_patterns()} == {1, 2, 3}
 
 
@@ -253,7 +252,7 @@ def test_hanpai_forces_a_newline_after_each_line():
     assert separator.allowed_tokens(state, controller.candidate_context()) == {6}
 
 
-def test_hanpai_forces_temporary_caesuras_at_internal_breaks():
+def test_hanpai_does_not_generate_internal_caesuras():
     tokenizer = FakeTokenizer()
     lexicon = FakeLexicon()
     profile = HanpaiConstraintProfile((5, 7, 5), lexicon)
@@ -266,9 +265,8 @@ def test_hanpai_forces_temporary_caesuras_at_internal_breaks():
     state = controller.snapshot()
     separator = NewlineSeparatorPolicy(tokenizer)
 
-    assert state.step is StepKind.CAESURA
-    assert separator.allowed_tokens(state, controller.candidate_context()) == {7}
-    controller.advance("、")
+    assert state.step is StepKind.TEXT
+    assert separator.allowed_tokens(state, controller.candidate_context()) == set()
     assert controller.remaining_before_boundary() == 3
 
 

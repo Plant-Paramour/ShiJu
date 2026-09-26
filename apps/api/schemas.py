@@ -23,6 +23,7 @@ class AgentChatModel(BaseModel):
     conversation_id: str | None = Field(default=None, max_length=128)
     model: str | None = Field(default=None, max_length=120)
     parent_message_id: str | None = Field(default=None, max_length=128)
+    turn_id: str | None = Field(default=None, max_length=128)
 
 
 class AgentProposalSubmitModel(BaseModel):
@@ -33,11 +34,13 @@ class AgentProposalSubmitModel(BaseModel):
     candidate_count: int = Field(default=1, ge=1, le=5)
     meter_type: str
     form_name: str
+    variant_name: str | None = None
     rhyme_dict_name: str = "Xinyun"
     rhyme_mode: str | None = None
     rhyme_parts: dict[str, str] | None = None
+    fixed_lines: dict[str, str] = Field(default_factory=dict)
     theme: str | None = None
-    strict_polyphonic: bool = True
+    strict_polyphonic: bool = False
     num_lines: int | None = Field(default=None, ge=4, le=128)
     task_options: dict[str, Any] = Field(default_factory=dict)
 
@@ -194,6 +197,12 @@ class ConversationCreateModel(BaseModel):
     title: str = Field(default="新建对话", max_length=15)
 
 
+class ConversationAutoCreateModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=4000)
+
+
 class ConversationPatchModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str | None = Field(default=None, max_length=15)
@@ -253,7 +262,7 @@ class GenerateJobModel(BaseModel):
     use_thinking: bool = False
     cipai_data_path: str = "PoeTone-main/data/cipai_data.json"
     num_lines: int | None = None
-    strict_polyphonic: bool = True
+    strict_polyphonic: bool = False
     candidate_count: int = Field(default=1, ge=1, le=5)
     task_options: dict[str, Any] = Field(default_factory=dict)
     sampling: SamplingModel = Field(default_factory=SamplingModel)
@@ -266,19 +275,28 @@ class RewriteJobModel(BaseModel):
     target_line_numbers: list[int] = Field(min_length=1, max_length=64)
     meter_type: str
     form_name: str
+    variant_name: str | None = None
     rhyme_dict_name: str = "Xinyun"
     rhyme_mode: str = "auto"
     rhyme_parts: dict[str, str] = Field(default_factory=dict)
+    fixed_lines: dict[str, str] = Field(default_factory=dict)
     requirement: str = ""
     theme: str = "局部改写"
     num_lines: int | None = None
-    strict_polyphonic: bool = True
+    strict_polyphonic: bool = False
     strict_context: bool = True
     candidate_count: int = Field(default=1, ge=1, le=5)
     task_options: dict[str, Any] = Field(default_factory=dict)
     sampling: SamplingModel = Field(
         default_factory=lambda: SamplingModel(max_new_tokens=512)
     )
+
+
+class PartialGenerateJobModel(RewriteJobModel):
+    """统一的部分生成契约；补全场景不要求原诗和目标句号。"""
+    original_text: str = ""
+    target_line_numbers: list[int] = Field(default_factory=list, max_length=64)
+    theme: str = "部分生成"
 
 
 class WorkerClaimModel(BaseModel):

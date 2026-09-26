@@ -12,7 +12,7 @@ from typing import Any
 
 from shiju.contracts import JobKind
 
-from .framework import AgentSession
+from .framework import AgentSession, ToolContext
 from .jobs import PoetryJobs
 from .openai_client import ChatModel, OpenAICompatibleChatModel
 from .gateway import ModelGateway
@@ -55,8 +55,19 @@ class RepositoryPoetryJobs(PoetryJobs):
     ) -> dict:
         return self._submit(JobKind.REWRITE.value, payload, idempotency_key)
 
+    def submit_partial_generate(self, payload: Mapping[str, Any], idempotency_key: str) -> dict:
+        return self._submit(JobKind.PARTIAL_GENERATE.value, payload, idempotency_key)
+
     def get_job(self, job_id: str) -> dict:
         return self._repository.snapshot(job_id)
+
+    def get_latest_job(self) -> dict:
+        if not self._user_id:
+            raise ValueError("当前会话没有绑定用户")
+        jobs = self._repository.list_for_user(self._user_id, self._conversation_id)
+        if not jobs:
+            raise ValueError("当前对话没有已提交的诗词任务")
+        return self._repository.snapshot(jobs[-1].id)
 
     def load_pending_proposal(self) -> dict[str, Any] | None:
         if not self._user_id or not self._conversation_id:
@@ -156,18 +167,18 @@ class _FallbackChatModel:
                 raise
             return self._fallback.complete(messages, tools)
 
-    def stream(self, messages, tools):
+    def stream(self, messages, tools, cancellation_event=None, resume_token=None):
         def generate():
             emitted = False
             try:
-                for event in self._primary.stream(messages, tools):
+                for event in self._primary.stream(messages, tools, cancellation_event=cancellation_event, resume_token=resume_token):
                     emitted = True
                     yield event
                 return
             except Exception:
                 if emitted or self._fallback is None:
                     raise
-            yield from self._fallback.stream(messages, tools)
+            yield from self._fallback.stream(messages, tools, cancellation_event=cancellation_event, resume_token=resume_token)
 
         return generate()
 
@@ -281,6 +292,21 @@ class WebAgentService:
         )
         with entry.lock:
             reply = entry.agent.respond(message)
+            # 模型可能在确认轮漏调 submit 工具。持久化方案是业务状态，不能
+            # 依赖模型是否恰好选择了工具；再做一次同轮幂等兜底。
+            if not entry.agent.submitted_jobs:
+                toolbox = getattr(entry.agent, "_toolbox", None)
+                fallback_submit = getattr(toolbox, "submit_pending_if_confirmed", None)
+                if callable(fallback_submit):
+                    fallback = fallback_submit(
+                        ToolContext(message.strip(), getattr(entry.agent, "_turn_index", 0))
+                    )
+                    if fallback:
+                        entry.agent._submitted_jobs.append(fallback)
+                        reply = (
+                            f"{reply}\n\n任务已实际提交，job_id：{fallback.get('job_id')}，"
+                            f"当前状态：{fallback.get('status', 'queued')}。"
+                        )
             entry.last_used_at = self._clock()
         result = {"session_id": active_id, "reply": reply}
         submitted = list(entry.agent.submitted_jobs)
@@ -296,13 +322,28 @@ class WebAgentService:
         try:
             result = model.complete(
                 [
-                    {"role": "system", "content": "你负责给 AI 对话生成标题。只输出一个简洁中文标题，不要引号、标点、解释，最多 15 个汉字。"},
+                    {
+                        "role": "system",
+                        "content": (
+                            "你负责为 AI 对话生成‘任务摘要标题’，不是写诗或拟文学题目。"
+                            "请从用户消息中提取这次对话要完成的主要任务和对象，使用直白、具体、可检索的中文短语，"
+                            "优先采用‘动作+对象’或‘主题+任务’结构，例如‘修改七律格律’、‘生成中秋诗词’、‘解释历史对话标题’。"
+                            "标题中必须出现明确的任务动作词，例如生成、创作、修改、检查、评分、分析、解释、查询、设计、翻译或总结；"
+                            "不要使用诗意抒情、对仗、押韵、夸张或泛化表达，不要复述完整句子；"
+                            "不要输出‘千里共婵娟’、‘月圆寄乡思’这类诗句或意象短语；"
+                            "不要引号、标点、前缀、后缀或任何解释，只输出一个标题，最多 15 个汉字。"
+                        ),
+                    },
                     {"role": "user", "content": str(message or "")[:2000]},
                 ],
                 [],
             )
             title = " ".join(str(result.get("content") or "").split()).strip(" \"'“”‘’：:。.!！?？")
-            return title[:15] or fallback
+            title = title[:15]
+            task_verbs = ("生成", "创作", "修改", "检查", "评分", "分析", "解释", "查询", "设计", "翻译", "总结", "整理", "编写", "核对", "评估")
+            if title and any(verb in title for verb in task_verbs):
+                return title
+            return fallback
         except Exception:
             return fallback
 
@@ -314,12 +355,13 @@ class WebAgentService:
         user_id: str | None = None,
         conversation_id: str | None = None,
         model: str | None = None,
+        cancellation_event=None,
     ):
         active_id, entry = self._get_or_create_session(
             session_id, history=history, user_id=user_id, conversation_id=conversation_id, model=model
         )
         with entry.lock:
-            for event in entry.agent.respond_stream(message):
+            for event in entry.agent.respond_stream(message, cancellation_event=cancellation_event):
                 if event["event_type"] == "turn.completed":
                     event["payload"]["session_id"] = active_id
                 yield event
@@ -353,6 +395,10 @@ class WebAgentService:
                         self._model.for_model(model) if hasattr(self._model, "for_model") else self._model,
                         AgentToolbox(self._project_root, jobs),
                         max_tool_rounds=self._max_tool_rounds,
+                        # 不要用主模型额外做一次分类请求：这会消耗一次性/流式模型
+                        # 的响应，并让持久化恢复时的第一轮确认错位。任务类型由工具
+                        # 规则和主请求共同决定；需要独立分类器时由上层显式注入。
+                        classifier_model=None,
                     ),
                     lock=threading.Lock(),
                     last_used_at=now,
@@ -361,21 +407,28 @@ class WebAgentService:
                 if history:
                     entry.agent.load_history(history)
                 self._sessions[active_id] = entry
-            elif model != entry.model:
-                # 模型选择器对同一会话也应立即生效，同时保留已有对话上下文。
-                jobs = (
-                    self._jobs.bind(user_id, conversation_id)
-                    if hasattr(self._jobs, "bind")
-                    else self._jobs
-                )
-                previous_messages = list(entry.agent.messages)
-                entry.agent = AgentSession(
-                    self._model.for_model(model) if hasattr(self._model, "for_model") else self._model,
-                    AgentToolbox(self._project_root, jobs),
-                    max_tool_rounds=self._max_tool_rounds,
-                )
-                entry.agent.load_history(previous_messages)
-                entry.model = model
+            else:
+                if history is not None:
+                    # 同一 session_id 会跨请求复用 AgentSession。网页按钮提交任务后，
+                    # 持久化消息才会新增 job_id；每轮请求都同步一次历史，避免旧会话
+                    # 继续使用提交前的上下文。
+                    entry.agent.load_history(history)
+                if model != entry.model:
+                    # 模型选择器对同一会话也应立即生效，同时保留已有对话上下文。
+                    jobs = (
+                        self._jobs.bind(user_id, conversation_id)
+                        if hasattr(self._jobs, "bind")
+                        else self._jobs
+                    )
+                    previous_messages = list(entry.agent.messages)
+                    entry.agent = AgentSession(
+                        self._model.for_model(model) if hasattr(self._model, "for_model") else self._model,
+                        AgentToolbox(self._project_root, jobs),
+                        max_tool_rounds=self._max_tool_rounds,
+                        classifier_model=None,
+                    )
+                    entry.agent.load_history(previous_messages)
+                    entry.model = model
         return active_id, entry
 
     def _remove_expired(self, now: float) -> None:

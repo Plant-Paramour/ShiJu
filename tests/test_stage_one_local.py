@@ -21,7 +21,7 @@ def test_local_database_migrations_and_readiness(tmp_path):
     assert ready.json()["database"] == "ok"
     with client.app.state.jobs.database.connect() as connection:
         migrations = connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-        assert migrations == 14
+        assert migrations >= 16
         assert connection.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
 
 

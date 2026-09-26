@@ -1,0 +1,13 @@
+{
+  "model_dir": "C:\\Users\\26051\\.cache\\modelscope\\hub\\models\\Qwen\\Qwen3-4B",
+  "vocab_size": 151669,
+  "chinese_containing": 25860,
+  "chinese_only_decoded": 25178,
+  "rule": "CJK Unicode ranges U+3400-U+4DBF, U+4E00-U+9FFF, U+F900-U+FAFF",
+  "files": [
+    "vocab.jsonl",
+    "vocab.tsv",
+    "chinese-containing.tsv",
+    "chinese-only-decoded.tsv"
+  ]
+}

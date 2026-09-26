@@ -11,6 +11,7 @@ from typing import Any
 from shiju.contracts import GeneratePoemRequest, RewritePoemRequest
 from shiju.data import MeterTemplateRepository, RhymeLexicon
 from shiju.rewriting.parser import parse_poem
+from shiju.rewriting.validation import validate_rewrite_context
 
 from .framework import ToolContext
 from .jobs import PoetryJobs
@@ -96,14 +97,20 @@ class AgentToolbox:
             return None
         if proposal.kind == "generate":
             return self._submit_generation({"proposal_id": proposal.id}, context)
-        if proposal.kind == "rewrite":
-            return self._submit_rewrite({"proposal_id": proposal.id}, context)
+        if proposal.kind == "partial_generate":
+            return self._submit_partial_generation({"proposal_id": proposal.id}, context)
         return None
 
     def schemas(self) -> list[dict[str, Any]]:
         return [tool.schema() for tool in self._tools.values()]
 
     def execute(self, name: str, arguments: Mapping[str, Any], context: ToolContext) -> Any:
+        # Compatibility for persisted/older callers; these names are deliberately
+        # absent from schemas(), so the model only sees the unified workflow.
+        name = {
+            "prepare_rewrite": "prepare_partial_generation",
+            "submit_rewrite": "submit_partial_generation",
+        }.get(name, name)
         try:
             tool = self._tools[name]
         except KeyError as exc:
@@ -197,22 +204,28 @@ class AgentToolbox:
                 self._submit_generation,
             ),
             ToolSpec(
-                "prepare_rewrite",
-                "准备并保存指定句重写方案。返回的 editable_prompt 和完整配置会由界面展示并直接提交；本轮不要调用 submit_rewrite。",
-                _rewrite_schema(),
+                "prepare_partial_generation",
+                "准备部分生成方案。用户提供了必须保留的句子，或要求改写完整原诗中的指定句子；本轮不要提交任务。",
+                _partial_schema(),
                 self._prepare_rewrite,
             ),
             ToolSpec(
-                "submit_rewrite",
-                "提交当前指定句重写方案。只能用于用户在后续纯文本消息中明确确认的场景；Web 按钮不经过此工具。",
+                "submit_partial_generation",
+                "提交当前部分生成方案；只能用于后续明确确认，Web 按钮直接提交。",
                 _object_schema({"proposal_id": {"type": "string"}}, ["proposal_id"]),
-                self._submit_rewrite,
+                self._submit_partial_generation,
             ),
             ToolSpec(
                 "get_poetry_job",
                 "查询已经提交的格律生成或重写任务状态与结果。任务完成时必须读取 generated_poems 中的真实标题和正文；不得根据主题自行补写诗句。",
                 _object_schema({"job_id": {"type": "string"}}, ["job_id"]),
                 self._get_poetry_job,
+            ),
+            ToolSpec(
+                "get_latest_poetry_job",
+                "查询当前用户本对话最近提交的诗词任务及真实结果。不需要 job_id；用户询问刚才生成的作品或进度时优先调用。",
+                _object_schema({}),
+                self._get_latest_poetry_job,
             ),
         )
 
@@ -394,7 +407,12 @@ class AgentToolbox:
         payload = _rewrite_payload(arguments)
         if "candidate_count" not in arguments:
             payload["candidate_count"] = _requested_candidate_count(context.user_message)
-        request = RewritePoemRequest.from_mapping(payload)
+        if str(payload.get("original_text") or "").strip():
+            request = RewritePoemRequest.from_mapping(payload)
+        else:
+            payload.pop("original_text", None)
+            payload.pop("target_line_numbers", None)
+            request = GeneratePoemRequest.from_mapping(payload)
         self._validate_form(
             request.meter_type,
             request.form_name,
@@ -408,12 +426,22 @@ class AgentToolbox:
             request.meter_type,
             request.form_name,
         )
-        poem = parse_poem(request.original_text)
-        if request.target_line_numbers[-1] > len(poem.lines):
-            raise ValueError(
-                f"目标句号超出原文范围；原文解析为 {len(poem.lines)} 句"
-            )
-        return self._store_proposal("rewrite", request.to_dict(), context)
+        if isinstance(request, RewritePoemRequest):
+            poem = parse_poem(request.original_text)
+            if request.target_line_numbers[-1] > len(poem.lines):
+                raise ValueError(
+                    f"目标句号超出原文范围；原文解析为 {len(poem.lines)} 句"
+                )
+            payload = request.to_dict()
+            targets = set(request.target_line_numbers)
+            payload["fixed_lines"] = {
+                str(line.number): line.text for line in poem.lines if line.number not in targets
+            }
+        else:
+            payload = request.to_dict()
+        if not payload.get("fixed_lines"):
+            raise ValueError("部分生成必须至少指定一句需要原样保留的句子")
+        return self._store_proposal("partial_generate", payload, context)
 
     def _store_proposal(self, kind: str, payload: dict, context: ToolContext) -> dict:
         proposal = PendingProposal(
@@ -434,6 +462,8 @@ class AgentToolbox:
             "requirement",
             "num_lines",
             "target_line_numbers",
+            "original_text",
+            "fixed_lines",
             "strict_polyphonic",
             "candidate_count",
             "task_options",
@@ -456,8 +486,22 @@ class AgentToolbox:
         return result
 
     def _submit_rewrite(self, arguments, context: ToolContext) -> dict:
-        proposal = self._confirmed_proposal(arguments, context, "rewrite")
+        proposal = self._confirmed_proposal(arguments, context, "partial_generate")
+        validate_rewrite_context(
+            RewritePoemRequest.from_mapping(proposal.payload), self._root
+        )
         result = self._jobs.submit_rewrite(proposal.payload, proposal.id)
+        proposal.submitted_job_id = str(result.get("job_id") or "") or None
+        self._save_pending()
+        return result
+
+    def _submit_partial_generation(self, arguments, context: ToolContext) -> dict:
+        proposal = self._confirmed_proposal(arguments, context, "partial_generate")
+        submitter = getattr(self._jobs, "submit_partial_generate", None)
+        if not callable(submitter):
+            # Older in-process job adapters use the legacy transport name.
+            submitter = self._jobs.submit_rewrite
+        result = submitter(proposal.payload, proposal.id)
         proposal.submitted_job_id = str(result.get("job_id") or "") or None
         self._save_pending()
         return result
@@ -515,6 +559,33 @@ class AgentToolbox:
             snapshot["agent_instruction"] = (
                 "任务已完成。以上 generated_poems 是本次真实生成正文；回答时只能引用这些正文并进行散文分析，禁止自行补写诗句。"
             )
+        return snapshot
+
+    def _get_latest_poetry_job(self, arguments, context) -> dict:
+        getter = getattr(self._jobs, "get_latest_job", None)
+        if not callable(getter):
+            raise ValueError("当前任务服务不支持按本对话查询最近任务")
+        snapshot = getter()
+        return self._format_poetry_snapshot(snapshot)
+
+    def _format_poetry_snapshot(self, snapshot: dict) -> dict:
+        if not isinstance(snapshot, dict):
+            return snapshot
+        candidates = list(snapshot.get("candidates") or [])
+        result = snapshot.get("result") if isinstance(snapshot.get("result"), dict) else {}
+        if not candidates:
+            candidates = list(result.get("candidates") or [])
+        generated = []
+        for index, candidate in enumerate(candidates, start=1):
+            if isinstance(candidate, Mapping):
+                content = str(candidate.get("content") or candidate.get("text") or "").strip()
+                if content:
+                    generated.append({"ordinal": candidate.get("ordinal", index), "title": str(candidate.get("title") or "").strip(), "content": content})
+        if not generated:
+            fallback = result.get("full_text") or result.get("content") or result.get("text")
+            if fallback:
+                generated.append({"ordinal": 1, "title": "", "content": str(fallback).strip()})
+        snapshot["generated_poems"] = generated
         return snapshot
 
     def _book_name(self, value: Any) -> str:
@@ -641,6 +712,7 @@ def _generation_schema() -> dict[str, Any]:
         {
             "meter_type": {"type": "string", "enum": ["唐诗", "宋词", "汉俳", "排律"]},
             "form_name": {"type": "string"},
+            "variant_name": {"type": "string", "description": "宋词变体名称；不指定时使用默认变体"},
             "theme": {"type": "string", "description": "简洁主题"},
             "rhyme_dict_name": {"type": "string", "enum": list(RHYME_BOOKS)},
             "rhyme_mode": {"type": "string", "enum": ["auto", "fixed", "random"], "description": "韵部策略：auto 自动锁韵，fixed 使用 rhyme_parts，random 随机选韵"},
@@ -678,29 +750,40 @@ def _rewrite_schema() -> dict[str, Any]:
     )
     return _object_schema(
         properties,
-        [
-            "original_text",
-            "target_line_numbers",
-            "meter_type",
-            "form_name",
-            "requirement",
-        ],
+        ["original_text", "target_line_numbers", "meter_type", "form_name", "requirement"],
     )
 
 
+def _partial_schema() -> dict[str, Any]:
+    properties = dict(_generation_schema()["properties"])
+    properties.update({
+        "original_text": {"type": "string", "description": "可选；改写完整原诗时填写"},
+        "target_line_numbers": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 64},
+        "fixed_lines": {"type": "object", "additionalProperties": {"type": "string"}, "description": "补全场景中必须保留的句子，键为从1开始的句号"},
+    })
+    required = ["meter_type", "form_name", "requirement"]
+    return _object_schema(properties, required)
+
+
 def _generation_payload(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    meter_type = arguments.get("meter_type")
+    task_options = dict(arguments.get("task_options") or {})
+    if meter_type in {"唐诗", "排律"}:
+        task_options.setdefault("allow_aojiu", True)
     return {
         "meter_type": arguments.get("meter_type"),
         "form_name": arguments.get("form_name"),
+        "variant_name": arguments.get("variant_name"),
         "theme": arguments.get("theme"),
         "rhyme_dict_name": arguments.get("rhyme_dict_name", "Xinyun"),
         "rhyme_mode": arguments.get("rhyme_mode", "auto"),
         "rhyme_parts": dict(arguments.get("rhyme_parts") or {}),
+        "fixed_lines": {str(k): str(v) for k, v in (arguments.get("fixed_lines") or {}).items()},
         "requirement": arguments.get("requirement", ""),
         "num_lines": arguments.get("num_lines"),
-        "strict_polyphonic": arguments.get("strict_polyphonic", True),
+        "strict_polyphonic": arguments.get("strict_polyphonic", False),
         "candidate_count": arguments.get("candidate_count", 1),
-        "task_options": dict(arguments.get("task_options") or {}),
+        "task_options": task_options,
     }
 
 

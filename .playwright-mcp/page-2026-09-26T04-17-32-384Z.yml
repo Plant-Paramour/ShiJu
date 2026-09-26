@@ -1,0 +1,89 @@
+- generic [ref=e1]:
+  - link "跳到主要内容" [ref=e2] [cursor=pointer]:
+    - /url: "#main-content"
+  - banner [ref=e3]:
+    - generic [ref=e4]:
+      - link "诗矩首页" [ref=e5] [cursor=pointer]:
+        - /url: "#home"
+        - generic [ref=e6]: 诗矩
+        - generic [aria-hidden] [ref=e7]: 矩
+      - navigation "主导航" [ref=e8]:
+        - link "首页" [ref=e9] [cursor=pointer]:
+          - /url: "#home"
+        - link "AI 对话" [ref=e10] [cursor=pointer]:
+          - /url: "#chat"
+        - link "格律检测" [ref=e11] [cursor=pointer]:
+          - /url: "#prosody"
+        - link "佳句检索" [ref=e12] [cursor=pointer]:
+          - /url: "#sentence-search"
+        - link "诗友论坛" [ref=e13] [cursor=pointer]:
+          - /url: "#forum"
+      - button "打开用户菜单" [ref=e15] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e16]: 诗
+  - complementary "用户菜单" [ref=e67]:
+    - generic [ref=e68]:
+      - generic [ref=e69]:
+        - generic [aria-hidden] [ref=e70]: 诗
+        - generic [ref=e71]:
+          - strong [ref=e72]: 访客
+          - generic [ref=e73]: 登录后管理创作
+      - button "关闭用户菜单" [active] [ref=e74] [cursor=pointer]: ×
+    - navigation "个人中心导航" [ref=e75]:
+      - button "我的信息" [ref=e76] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e77]: 我
+      - button "我的作品" [ref=e79] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e80]: 作
+      - button "我的收藏" [ref=e82] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e83]: 藏
+      - button "归档对话" [ref=e85] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e86]: 档
+      - button "关注诗友" [ref=e88] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e89]: 友
+    - region [ref=e91]:
+      - generic [ref=e92]:
+        - heading "你的通知" [level=3] [ref=e93]
+        - link "查看全部" [ref=e94] [cursor=pointer]:
+          - /url: "#notifications"
+      - paragraph [ref=e96]: 暂无新通知
+    - button "登录 / 注册" [ref=e98] [cursor=pointer]
+  - main [ref=e17]:
+    - region [ref=e18]:
+      - generic [ref=e19]:
+        - complementary "对话列表" [ref=e20]:
+          - generic [ref=e21]:
+            - generic [ref=e22]:
+              - generic [ref=e23]: 诗矩
+              - generic [ref=e24]: AI 诗词助手
+            - generic [ref=e25]:
+              - button "搜索历史对话" [ref=e26] [cursor=pointer]: ⌕
+              - button "收起历史对话栏" [expanded] [ref=e27] [cursor=pointer]: ‹
+          - button "新建对话" [ref=e28] [cursor=pointer]
+          - navigation "历史对话" [ref=e29]:
+            - paragraph [ref=e30]: 登录后查看历史对话
+        - generic [ref=e31]:
+          - generic [ref=e32]:
+            - heading "与诗矩对谈" [level=1] [ref=e33]
+            - status [ref=e34]: 待连接
+          - region [ref=e37]:
+            - img "诗矩 AI" [ref=e39]
+            - paragraph [ref=e40]: 诗矩 AI 诗词助手
+            - heading "从一句诗意开始" [level=2] [ref=e41]
+            - paragraph [ref=e42]: 告诉我你的意象、情绪或残稿，我会陪你推敲格律、寻找韵脚，慢慢把诗写完整。
+            - generic "示例提问" [ref=e43]:
+              - button "查询韵书" [ref=e44] [cursor=pointer]
+              - button "生成一首" [ref=e45] [cursor=pointer]
+              - button "查询词牌" [ref=e46] [cursor=pointer]
+          - generic [ref=e47]:
+            - generic [ref=e48]: 输入消息
+            - textbox "输入消息" [ref=e49]:
+              - /placeholder: 写下你的想法……
+            - generic [ref=e50]:
+              - generic "选择模型" [ref=e51]:
+                - combobox "选择模型" [ref=e52]:
+                  - option "deepseek-v3.2" [selected]
+                  - option "Qwen3"
+              - generic [ref=e53]:
+                - button "打开创作提示词" [ref=e54] [cursor=pointer]
+                - generic "添加图片" [ref=e58] [cursor=pointer]
+                - button "发送" [ref=e63] [cursor=pointer]
+  - status

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from typing import Any, Mapping
@@ -17,13 +18,15 @@ class EventRepository:
 
     def start_turn(self, *, user_id: str | None, conversation_id: str | None,
                    user_message_id: str | None = None,
-                   assistant_message_id: str | None = None) -> str:
+                   assistant_message_id: str | None = None,
+                   branch_id: str | None = None,
+                   status: str = "running") -> str:
         turn_id = str(uuid.uuid4())
         now = self._clock()
         with self.database.connect() as connection:
             connection.execute(
-                "INSERT INTO agent_turns(id,user_id,conversation_id,user_message_id,assistant_message_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
-                (turn_id, user_id, conversation_id, user_message_id, assistant_message_id, now, now),
+                "INSERT INTO agent_turns(id,user_id,conversation_id,user_message_id,assistant_message_id,branch_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                (turn_id, user_id, conversation_id, user_message_id, assistant_message_id, branch_id, status, now, now),
             )
         return turn_id
 
@@ -52,6 +55,36 @@ class EventRepository:
         with self.database.connect() as connection:
             connection.execute("UPDATE agent_turns SET status=?,updated_at=? WHERE id=?", (status, self._clock(), turn_id))
 
+    def get_turn(self, turn_id: str, user_id: str | None = None) -> dict[str, Any] | None:
+        with self.database.connect() as connection:
+            if user_id:
+                row = connection.execute("SELECT * FROM agent_turns WHERE id=? AND user_id=?", (turn_id, user_id)).fetchone()
+            else:
+                row = connection.execute("SELECT * FROM agent_turns WHERE id=?", (turn_id,)).fetchone()
+        return dict(row) if row else None
+
+    def set_turn_status(self, turn_id: str, status: str, *, cancel_requested: bool | None = None) -> bool:
+        now = self._clock()
+        with self.database.connect() as connection:
+            if cancel_requested is None:
+                updated = connection.execute("UPDATE agent_turns SET status=?,updated_at=? WHERE id=?", (status, now, turn_id))
+            else:
+                updated = connection.execute("UPDATE agent_turns SET status=?,cancel_requested=?,updated_at=? WHERE id=?", (status, 1 if cancel_requested else 0, now, turn_id))
+        return updated.rowcount == 1
+
+    def active_turn(self, branch_id: str | None, *, exclude_turn_id: str | None = None) -> dict[str, Any] | None:
+        if not branch_id:
+            return None
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM agent_turns WHERE branch_id=? AND status IN ('running','pausing','resuming') AND id<>? ORDER BY created_at DESC LIMIT 1", (branch_id, exclude_turn_id or "")).fetchone()
+        return dict(row) if row else None
+
+    def interrupt_unfinished_turns(self) -> int:
+        with self.database.connect() as connection:
+            updated = connection.execute("UPDATE agent_turns SET status='interrupted',updated_at=? WHERE status IN ('running','pausing','resuming')", (self._clock(),))
+            connection.execute("UPDATE messages SET status='interrupted',updated_at=? WHERE turn_id IN (SELECT id FROM agent_turns WHERE status='interrupted') AND status IN ('pending','paused')", (self._clock(),))
+        return updated.rowcount
+
     def list_agent_events(self, conversation_id: str, *, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
             rows = connection.execute(
@@ -68,10 +101,7 @@ class EventRepository:
             row = connection.execute("SELECT COALESCE(MAX(seq),0) FROM job_events WHERE job_id=?", (job_id,)).fetchone()
             seq = int(row[0]) + 1
             event_id = str(uuid.uuid4())
-            connection.execute(
-                "INSERT INTO job_events(id,job_id,seq,event_type,payload_json,created_at) VALUES (?,?,?,?,?,?)",
-                (event_id, job_id, seq, event_type, json.dumps(payload, ensure_ascii=False), now),
-            )
+            connection.execute("INSERT INTO job_events(id,job_id,seq,event_type,payload_json,created_at) VALUES (?,?,?,?,?,?)", (event_id, job_id, seq, event_type, json.dumps(payload, ensure_ascii=False), now))
         return {"id": event_id, "job_id": job_id, "seq": seq, "event_type": event_type, "payload": payload, "created_at": now}
 
     def list_job_events(self, job_id: str, *, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
@@ -87,3 +117,29 @@ class EventRepository:
             "seq": row["seq"], "event_type": row["event_type"],
             "payload": json.loads(row["payload_json"]), "created_at": row["created_at"],
         }
+
+
+class TurnController:
+    """进程内 turn 取消信号；数据库保存对外可见状态。"""
+
+    def __init__(self):
+        self._events: dict[str, threading.Event] = {}
+        self._lock = threading.Lock()
+
+    def register(self, turn_id: str) -> threading.Event:
+        with self._lock:
+            event = self._events.setdefault(turn_id, threading.Event())
+            event.clear()
+            return event
+
+    def request_stop(self, turn_id: str) -> bool:
+        with self._lock:
+            event = self._events.get(turn_id)
+            if event is None:
+                return False
+            event.set()
+            return True
+
+    def unregister(self, turn_id: str) -> None:
+        with self._lock:
+            self._events.pop(turn_id, None)

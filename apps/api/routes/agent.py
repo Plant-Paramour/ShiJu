@@ -8,12 +8,14 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from apps.agent.openai_client import ChatModelError
+from apps.agent.framework import AgentTurnPaused
 
 from ..schemas import AgentChatModel, AgentProposalSubmitModel
 from .auth import current_user
 from ..event_repository import EventRepository
 from ..job_repository import IdempotencyConflict
 from shiju.contracts import GeneratePoemRequest, RewritePoemRequest
+from shiju.rewriting.validation import validate_rewrite_context
 
 
 router = APIRouter(prefix="/v1/agent", tags=["agent"])
@@ -48,10 +50,12 @@ def submit_proposal(
             "candidate_count": body.candidate_count,
             "meter_type": body.meter_type,
             "form_name": body.form_name,
+            "variant_name": body.variant_name,
             "rhyme_dict_name": body.rhyme_dict_name,
             "strict_polyphonic": body.strict_polyphonic,
             "num_lines": body.num_lines,
             "task_options": body.task_options,
+            "fixed_lines": body.fixed_lines,
         }
     )
     if body.theme is not None:
@@ -61,9 +65,17 @@ def submit_proposal(
     if body.rhyme_parts is not None:
         payload["rhyme_parts"] = body.rhyme_parts
     try:
-        if row["kind"] == "rewrite":
+        if row["kind"] in {"rewrite", "partial_generate"} and not payload.get("fixed_lines"):
+            raise ValueError("部分生成必须至少指定一句需要原样保留的句子")
+        if row["kind"] in {"rewrite", "partial_generate"} and payload.get("original_text"):
             normalized = RewritePoemRequest.from_mapping(payload).to_dict()
+            validate_rewrite_context(
+                RewritePoemRequest.from_mapping(normalized),
+                request.app.state.project_root,
+            )
         else:
+            payload.pop("original_text", None)
+            payload.pop("target_line_numbers", None)
             normalized = GeneratePoemRequest.from_mapping(payload).to_dict()
         job = request.app.state.jobs.submit(
             row["kind"],
@@ -79,6 +91,13 @@ def submit_proposal(
             "UPDATE agent_proposals SET payload_json=?,submitted_job_id=?,updated_at=? WHERE proposal_id=?",
             (json.dumps(normalized, ensure_ascii=False, separators=(",", ":")), job.id, time.time(), proposal_id),
         )
+        # 任务由网页按钮直接提交，不会经过 Agent 的 submit 工具调用；
+        # 将 job_id 关联到方案助手消息，后续恢复会话时才能把它提供给 Agent。
+        if row["assistant_message_id"]:
+            connection.execute(
+                "UPDATE messages SET job_id=? WHERE id=? AND conversation_id=?",
+                (job.id, row["assistant_message_id"], body.conversation_id),
+            )
     request.app.state.gpu_provider.ensure_running()
     result = request.app.state.jobs.snapshot(job.id)
     result["waiting_for_worker"] = not request.app.state.jobs.has_live_worker()
@@ -91,6 +110,12 @@ def chat_stream(body: AgentChatModel, request: Request, authorization: str | Non
     if service is None: raise HTTPException(status_code=503, detail="Agent 未启用或缺少大模型配置")
     user = current_user(request, authorization, required=False)
     conversation_id = body.conversation_id
+    resume_turn = None
+    if body.turn_id:
+        resume_turn = EventRepository(request.app.state.jobs.database).get_turn(body.turn_id)
+        if resume_turn is None or not user or resume_turn.get("user_id") != user["id"]:
+            raise HTTPException(status_code=404, detail="turn not found")
+        conversation_id = resume_turn.get("conversation_id")
     if user:
         if conversation_id is None:
             conversation = request.app.state.users.create_conversation(user["id"], body.message[:80])
@@ -105,21 +130,56 @@ def chat_stream(body: AgentChatModel, request: Request, authorization: str | Non
         turn_id = None
         user_message_id = None
         assistant_message_id = None
+        branch_id = None
+        cancel_event = None
         worker_started = False
         try:
             history = None
-            if user and conversation_id:
-                history = [m for m in request.app.state.users.list_messages(conversation_id, user["id"]) if m.get("status") == "completed"]
+            if resume_turn:
+                turn_id = resume_turn["id"]
+                branch_id = resume_turn.get("branch_id")
+                if events.active_turn(branch_id, exclude_turn_id=turn_id):
+                    raise ValueError("该分支已有正在运行的 Agent turn")
+                user_message_id = resume_turn.get("user_message_id")
+                assistant_message_id = resume_turn.get("assistant_message_id")
+                target = request.app.state.users.get_message(user_message_id, conversation_id, user["id"])
+                history = [m for m in request.app.state.users.list_path_messages(conversation_id, user["id"], user_message_id) if m.get("status") == "completed"]
+                events.set_turn_status(turn_id, "resuming", cancel_requested=False)
+                with request.app.state.jobs.database.connect() as connection:
+                    connection.execute("UPDATE messages SET status='pending',updated_at=? WHERE id=?", (time.time(), assistant_message_id))
+            elif user and conversation_id:
+                target = request.app.state.users.get_message(body.parent_message_id, conversation_id, user["id"]) if body.parent_message_id else None
+                if body.parent_message_id and target is None:
+                    raise ValueError("parent message not found")
+                branch = request.app.state.users.ensure_branch_for_message(conversation_id, user["id"], body.parent_message_id)
+                branch_id = branch["id"]
+                if events.active_turn(branch_id):
+                    raise ValueError("该分支已有正在运行的 Agent turn")
+                history_head = target.get("parent_message_id") if target else branch.get("head_message_id")
+                history = [m for m in request.app.state.users.list_path_messages(conversation_id, user["id"], history_head) if m.get("status") == "completed"]
                 user_message = request.app.state.users.add_message(
                     conversation_id,
                     user["id"],
                     "user",
                     body.message,
-                    parent_message_id=body.parent_message_id,
+                    # 编辑 User 消息要从其原父节点开新版本；继续回答 Assistant
+                    # 则必须接在 Assistant 后面，不能跳过目标节点。
+                    parent_message_id=(
+                        target["parent_message_id"]
+                        if target and target.get("role") == "user"
+                        else target["id"] if target else history_head
+                    ),
                 )
-                pending = request.app.state.users.add_message(conversation_id, user["id"], "assistant", "", status="pending")
+                request.app.state.users.update_branch_root_if_empty(branch_id, user_message["id"])
+                pending = request.app.state.users.add_message(conversation_id, user["id"], "assistant", "", status="pending", parent_message_id=user_message["id"])
                 user_message_id = user_message["id"]; assistant_message_id = pending["id"]
-            turn_id = events.start_turn(user_id=user["id"] if user else None, conversation_id=conversation_id, user_message_id=user_message_id, assistant_message_id=assistant_message_id)
+            if not turn_id:
+                turn_id = events.start_turn(user_id=user["id"] if user else None, conversation_id=conversation_id, user_message_id=user_message_id, assistant_message_id=assistant_message_id, branch_id=branch_id)
+            cancel_event = request.app.state.turn_controller.register(turn_id)
+            if user and conversation_id and assistant_message_id:
+                with request.app.state.jobs.database.connect() as connection:
+                    connection.execute("UPDATE messages SET turn_id=?,updated_at=? WHERE id=?", (turn_id, time.time(), assistant_message_id))
+                request.app.state.users.update_branch_head(branch_id, assistant_message_id)
             event_queue: queue.Queue[tuple[str, dict | None]] = queue.Queue()
 
             def publish(event_type: str, payload: dict) -> None:
@@ -130,9 +190,9 @@ def chat_stream(body: AgentChatModel, request: Request, authorization: str | Non
                 reply_parts: list[str] = []
                 submitted_jobs: list[dict] = []
                 try:
-                    publish("turn.started", {"conversation_id": conversation_id, "user_message_id": user_message_id, "assistant_message_id": assistant_message_id})
+                    publish("turn.started", {"turn_id": turn_id, "branch_id": branch_id, "conversation_id": conversation_id, "user_message_id": user_message_id, "assistant_message_id": assistant_message_id})
                     if hasattr(service, "respond_stream"):
-                        stream_events = service.respond_stream(body.message, conversation_id or body.session_id, history=history, user_id=user["id"] if user else None, conversation_id=conversation_id, model=body.model)
+                        stream_events = service.respond_stream(body.message, conversation_id or body.session_id, history=history, user_id=user["id"] if user else None, conversation_id=conversation_id, model=body.model, cancellation_event=cancel_event)
                     else:
                         try:
                             result = service.respond(body.message, conversation_id or body.session_id, history=history, user_id=user["id"] if user else None, conversation_id=conversation_id, model=body.model)
@@ -173,7 +233,13 @@ def chat_stream(body: AgentChatModel, request: Request, authorization: str | Non
                             publish(event_type, payload)
                             events.finish_turn(turn_id)
                             return
+                        payload.setdefault("turn_id", turn_id); payload.setdefault("branch_id", branch_id); payload.setdefault("message_id", assistant_message_id)
                         publish(event_type, payload)
+                except AgentTurnPaused:
+                    events.finish_turn(turn_id, "paused")
+                    if user and conversation_id and assistant_message_id:
+                        request.app.state.users.update_message(assistant_message_id, conversation_id, user["id"], content="".join(reply_parts), status="paused")
+                    publish("turn.paused", {"turn_id": turn_id, "branch_id": branch_id, "message_id": assistant_message_id, "text": "".join(reply_parts)})
                 except Exception as exc:
                     failed_payload = {"error": str(exc)}
                     try:
@@ -186,6 +252,7 @@ def chat_stream(body: AgentChatModel, request: Request, authorization: str | Non
                     except Exception:
                         pass
                 finally:
+                    request.app.state.turn_controller.unregister(turn_id)
                     event_queue.put(("done", None))
 
             threading.Thread(target=run_turn, name=f"agent-turn-{turn_id[:8]}", daemon=True).start()
@@ -212,6 +279,51 @@ def chat_stream(body: AgentChatModel, request: Request, authorization: str | Non
             else:
                 yield f"event: error\ndata: {json.dumps({'error': str(exc)}, ensure_ascii=False)}\n\n"
     return StreamingResponse(stream(), media_type="text/event-stream; charset=utf-8", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _turn_for_user(request: Request, turn_id: str, authorization: str | None):
+    user = current_user(request, authorization, required=True)
+    turn = EventRepository(request.app.state.jobs.database).get_turn(turn_id, user["id"])
+    if turn is None:
+        raise HTTPException(status_code=404, detail="turn not found")
+    return user, turn
+
+
+@router.get("/turns/{turn_id}")
+def get_turn(turn_id: str, request: Request, authorization: str | None = Header(default=None)):
+    _, turn = _turn_for_user(request, turn_id, authorization)
+    return turn
+
+
+@router.post("/turns/{turn_id}/pause")
+def pause_turn(turn_id: str, request: Request, authorization: str | None = Header(default=None)):
+    _, turn = _turn_for_user(request, turn_id, authorization)
+    if turn["status"] not in {"running", "resuming"}:
+        return turn
+    events = EventRepository(request.app.state.jobs.database)
+    events.set_turn_status(turn_id, "pausing", cancel_requested=True)
+    if not request.app.state.turn_controller.request_stop(turn_id):
+        events.set_turn_status(turn_id, "paused", cancel_requested=True)
+    return events.get_turn(turn_id)
+
+
+@router.post("/turns/{turn_id}/cancel")
+def cancel_turn(turn_id: str, request: Request, authorization: str | None = Header(default=None)):
+    _, turn = _turn_for_user(request, turn_id, authorization)
+    events = EventRepository(request.app.state.jobs.database)
+    events.set_turn_status(turn_id, "cancelled", cancel_requested=True)
+    request.app.state.turn_controller.request_stop(turn_id)
+    return events.get_turn(turn_id)
+
+
+@router.post("/turns/{turn_id}/resume")
+def resume_turn(turn_id: str, request: Request, authorization: str | None = Header(default=None)):
+    _, turn = _turn_for_user(request, turn_id, authorization)
+    if turn["status"] not in {"paused", "interrupted"}:
+        return turn
+    events = EventRepository(request.app.state.jobs.database)
+    events.set_turn_status(turn_id, "resuming", cancel_requested=False)
+    return events.get_turn(turn_id)
 
 
 @router.post("/chat")

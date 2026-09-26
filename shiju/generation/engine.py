@@ -58,8 +58,21 @@ class GenerationEngine:
         on_candidate_event=None,
     ) -> dict[str, Any]:
         runtime, vocab = self._runtime_for(request)
+        messages = runtime.messages
+        if request.fixed_lines:
+            fixed_context = "\n".join(
+                f"- 第{number}句：{text}"
+                for number, text in sorted(request.fixed_lines.items(), key=lambda item: int(item[0]))
+            )
+            messages = [*runtime.messages]
+            messages[-1] = {
+                **messages[-1],
+                "content": messages[-1]["content"]
+                + "\n\n【部分生成】以下句子是确定内容，必须原样保留；请只生成其余句子，并让全文自然衔接：\n"
+                + fixed_context,
+            }
         prompt = self.runner.render_chat(
-            runtime.messages,
+            messages,
             enable_thinking=request.use_thinking,
         )
         prompt_length = self._prompt_length(prompt)
@@ -70,7 +83,20 @@ class GenerationEngine:
                 if on_candidate_event: on_candidate_event("candidate.started", {"ordinal": ordinal, "attempt": attempt})
                 processors = None
                 if use_constraints:
-                    processors = (runtime.create_processor(vocab, self.runner.tokenizer, prompt_length),)
+                    fixed_lines = {}
+                    for number, text in request.fixed_lines.items():
+                        try:
+                            index = int(number) - 1
+                        except (TypeError, ValueError) as exc:
+                            raise ValueError(f"指定句序号无效: {number}") from exc
+                        if index < 0 or index >= len(runtime.profile.layout.lines):
+                            raise ValueError(f"指定句序号超出范围: {number}")
+                        fixed_lines[index] = str(text).strip()
+                    processors = (runtime.create_processor(
+                        vocab, self.runner.tokenizer, prompt_length,
+                        fixed_lines=fixed_lines,
+                        strict_polyphonic=request.strict_polyphonic,
+                    ),)
                 partial = ""
                 def on_text(piece: str) -> None:
                     nonlocal partial
@@ -210,6 +236,7 @@ class GenerationEngine:
         task_request = TaskRequest(
             meter_type=request.meter_type,
             form_name=request.form_name,
+            variant_name=request.variant_name,
             theme=request.theme,
             rhyme_dict_name=request.rhyme_dict_name,
             requirement=request.requirement,
@@ -224,7 +251,7 @@ class GenerationEngine:
             num_lines=request.num_lines,
             hanpai=HanpaiOptions(**options) if request.meter_type == "汉俳" else HanpaiOptions(),
             tang=(
-                TangOptions(allow_aojiu=bool(options.get("allow_aojiu", False)))
+                TangOptions(allow_aojiu=bool(options.get("allow_aojiu", True)))
                 if request.meter_type == "唐诗"
                 else TangOptions()
             ),
