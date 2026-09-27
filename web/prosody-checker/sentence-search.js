@@ -194,8 +194,6 @@ function renderVerdict(result, expected) {
 }
 async function loadSongciOptions() {
   const items = await catalog();
-  // 提前并行建立词牌模板请求，避免匹配时按 821 个词牌逐个等待网络响应。
-  void Promise.allSettled(items.map((item) => meter(item.file)));
   cipai.replaceChildren(); items.forEach((item) => cipai.add(new Option(`${item.name}　${item.char_count}字`, item.file)));
   await updateVariants();
 }
@@ -215,7 +213,20 @@ async function updatePattern(selected) {
   const stanzaData = selected?.[`stanza${Number(stanza.value) + 1}`] || selected?.stanza1; line.replaceChildren(); (stanzaData?.lines || []).forEach((_, index) => line.add(new Option(`第${index + 1}句`, String(index))));
   const expected = stanzaData?.lines?.[Number(line.value) || 0] || "—"; pattern.textContent = expected; template.hidden = false;
 }
-function refreshType() { const isSongci = type.value === "songci"; const fixedLength = type.value === "wuyan" || type.value === "qiyan"; songciFields.forEach((field) => { field.hidden = !isSongci; }); $("#sentence-length-field").hidden = isSongci || fixedLength; if (!isSongci) updatePattern(); else updateVariants(); }
+let songciOptionsLoaded = false;
+async function refreshType() {
+  const isSongci = type.value === "songci";
+  const fixedLength = type.value === "wuyan" || type.value === "qiyan";
+  songciFields.forEach((field) => { field.hidden = !isSongci; });
+  $("#sentence-length-field").hidden = isSongci || fixedLength;
+  if (!isSongci) return updatePattern();
+  if (!songciOptionsLoaded) {
+    await loadSongciOptions();
+    songciOptionsLoaded = true;
+  } else {
+    await updateVariants();
+  }
+}
 
 $("#sentence-check-button").addEventListener("click", async () => { const text = $("#sentence-text").value.trim(); const status = $("#sentence-check-status"); if (!splitSentences(text).length) { status.textContent = "请输入一句或两句中文"; return; } status.textContent = "判断中……"; try { const book = await lexicon($("#sentence-rhyme-book").value); let expected; if (type.value === "songci") { const data = await meter(cipai.value); const selected = data.variants.find((item) => item.name === variant.value) || data.variants[0]; expected = selected[`stanza${Number(stanza.value) + 1}`]?.lines?.[Number(line.value) || 0] || ""; } else expected = patternsFor(type.value, Number(length.value))[0]; renderVerdict(scoreSentence(text, expected, book), expected); status.textContent = ""; } catch (error) { status.textContent = error.message; } });
 
@@ -271,7 +282,7 @@ document.querySelectorAll("#match-priority-list li").forEach((item) => {
 });
 syncPrimaryPriority();
 type.addEventListener("change", refreshType); length.addEventListener("change", updatePattern); cipai.addEventListener("change", updateVariants); variant.addEventListener("change", updateLines); stanza.addEventListener("change", async () => { const data = await meter(cipai.value); const selected = data.variants.find((item) => item.name === variant.value) || data.variants[0]; await updatePattern(selected); }); line.addEventListener("change", updateLines);
-loadSongciOptions().catch((error) => { $("#sentence-check-status").textContent = error.message; }); refreshType();
+refreshType().catch((error) => { $("#sentence-check-status").textContent = error.message; });
 
 document.addEventListener("click", (event) => {
   if (event.target.closest("#match-button") && $("#match-respect-breaks").checked && !$("#match-text").value.includes("/")) {

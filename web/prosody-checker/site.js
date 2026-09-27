@@ -702,7 +702,7 @@ async function refreshConversationMessages(conversationId) {
       const article = chatThread.querySelector(`[data-message-id="${message.id}"]`);
       if (!article) {
         const created = appendPersistedMessage(message);
-        if (message.job_id) startJobProgress(message.job_id, null, created, conversationId);
+        if (message.job_id && message.status === "pending") startJobProgress(message.job_id, null, created, conversationId);
         return;
       }
       if (article.dataset.messageStatus !== message.status || article.querySelector(".message-content p")?.textContent !== normalizeAssistantText(message.content)) {
@@ -710,7 +710,7 @@ async function refreshConversationMessages(conversationId) {
         replaceMessage(article, message.content, state);
         article.dataset.messageStatus = message.status || "completed";
       }
-      if (message.job_id) {
+      if (message.job_id && message.status === "pending") {
         article.dataset.jobId = message.job_id;
         const proposalAnchor = chatThread.querySelector(`.proposal-editor[data-job-id="${CSS.escape(message.job_id)}"]`);
         startJobProgress(message.job_id, null, proposalAnchor || article, conversationId);
@@ -982,8 +982,10 @@ function createPoemHandscroll(poem, { resultLabel = "", showTime = false, evalua
   const inspect = document.createElement("button");
   inspect.type = "button"; inspect.className = "poem-score__inspect";
   inspect.textContent = evaluation ? "格律评分" : (evaluationPending ? "评分中" : "暂无评分");
-  inspect.disabled = !evaluation;
-  if (evaluation) inspect.addEventListener("click", () => openProsodyInspector(evaluation, value.title));
+  const canEvaluate = !evaluation && Boolean(value.job_id && value.candidate_ordinal != null && value.content);
+  inspect.disabled = !evaluation && !canEvaluate;
+  if (evaluation) inspect.addEventListener("click", () => openProsodyInspector(value.evaluation, value.title));
+  else if (canEvaluate) inspect.addEventListener("click", () => evaluateHistoricalPoem(value, inspect, scorePanel));
   if (evaluation) {
     const scoreBook = document.createElement("span");
     scoreBook.className = "poem-score__book";
@@ -1104,29 +1106,6 @@ async function loadPoems() {
   const type = document.querySelector("#profile-work-type")?.value || "";
   renderPoemList(document.querySelector("#poem-list"), ownedPoems.filter((poem) => !type || poem.work_type === type), "暂无诗作记录。完成一次格律生成后，作品会自动归档到这里。");
   renderPoemList(document.querySelector("#favorite-list"), favoritePoems, "还没有收藏作品。");
-  profilePoems.filter((poem) => !poem.evaluation && poem.job_id && poem.candidate_ordinal != null).forEach(async (poem) => {
-    const key = `${poem.job_id}:${poem.candidate_ordinal}`;
-    if (activeEvaluations.has(key) || completedEvaluations.has(key) || failedEvaluations.has(key)) return;
-    try {
-      const job = await apiFetch(`/v1/poetry/jobs/${encodeURIComponent(poem.job_id)}/state`);
-      console.info("[历史作品评分] 开始补算", { id: poem.id, title: poem.title, meter_type: poem.meter_type, form_name: poem.form_name, candidate_ordinal: poem.candidate_ordinal, job_status: job.status, candidates: (job.candidates || []).map((item) => ({ ordinal: item.ordinal, status: item.status, hasContent: Boolean(item.content) })) });
-      const candidates = job.candidates || [];
-      const candidateOrdinal = Number(poem.candidate_ordinal);
-      const candidate = candidates.find((item) => Number(item.ordinal) === candidateOrdinal)
-        || candidates[candidateOrdinal]
-        || candidates[candidateOrdinal - 1];
-      if (candidate) {
-        const evaluationCandidate = { ...candidate, content: candidate.content || poem.content, status: candidate.status || "succeeded" };
-        ensureCandidateEvaluation(job, evaluationCandidate, { ...(job.request || {}), ...poem }, () => {});
-      } else if (poem.content) {
-        console.warn("[历史作品评分] 使用作品正文直接补算", { id: poem.id, candidate_ordinal: poem.candidate_ordinal });
-        ensureCandidateEvaluation(job, { ordinal: candidateOrdinal, status: "succeeded", content: poem.content }, { ...(job.request || {}), ...poem }, () => {});
-      } else console.error("[历史作品评分] 找不到候选且作品无正文", { id: poem.id, candidate_ordinal: poem.candidate_ordinal, candidates: candidates.map((item) => item.ordinal) });
-    } catch (error) {
-      failedEvaluations.add(key);
-      console.error("[历史作品评分] 补算失败", { poem, error, stack: error?.stack });
-    }
-  });
 }
 
 async function loadProfileData() {
@@ -2069,13 +2048,14 @@ function candidateDetail(candidate, wasOpen = false) {
 }
 
 async function ensureCandidateEvaluation(job, candidate, requestMeta, onComplete) {
-  if (candidate.evaluation || candidate.status !== "succeeded" || !candidate.content) return;
+  if (candidate.evaluation || candidate.status !== "succeeded" || !candidate.content) return null;
   const key = `${job.job_id}:${candidate.ordinal}`;
   if (completedEvaluations.has(key)) {
     candidate.evaluation = completedEvaluations.get(key);
-    return;
+    return null;
   }
-  if (activeEvaluations.has(key) || failedEvaluations.has(key)) return;
+  if (activeEvaluations.has(key)) return activeEvaluations.get(key);
+  if (failedEvaluations.has(key)) return null;
   const operation = (async () => {
     try {
       console.info("[历史作品评分] 调用本地评分器", { job_id: job.job_id, ordinal: candidate.ordinal, meter_type: requestMeta.meter_type, form_name: requestMeta.form_name, contentLength: String(candidate.content || "").length });
@@ -2098,9 +2078,70 @@ async function ensureCandidateEvaluation(job, candidate, requestMeta, onComplete
     }
   })();
   activeEvaluations.set(key, operation);
+  return operation;
 }
 
-function renderAvailableScrolls(container, job, requestMeta) {
+function renderPoemScore(scorePanel, inspect, poem, evaluation) {
+  poem.evaluation = evaluation;
+  scorePanel.classList.remove("poem-score--pending");
+  const top = scorePanel.querySelector(".poem-score__top");
+  inspect.textContent = "格律评分";
+  inspect.disabled = false;
+  let book = scorePanel.querySelector(".poem-score__book");
+  if (!book) {
+    book = document.createElement("span");
+    book.className = "poem-score__book";
+    top.append(book);
+  }
+  book.textContent = evaluation.rhyme_book_name || evaluation.rhyme_book_id || "韵书未标注";
+  const grid = document.createElement("dl");
+  [["结构", evaluation.structure_score], ["平仄", evaluation.tonal_score], ["押韵", evaluation.rhyme_score]].forEach(([label, score]) => {
+    const group = document.createElement("div");
+    const term = document.createElement("dt"); term.textContent = label;
+    const description = document.createElement("dd"); description.textContent = scoreText(score);
+    group.append(term, description); grid.append(group);
+  });
+  scorePanel.querySelector("dl")?.remove();
+  scorePanel.append(grid);
+  inspect.onclick = () => openProsodyInspector(poem.evaluation, poem.title);
+}
+
+async function evaluateHistoricalPoem(poem, inspect, scorePanel) {
+  const key = `${poem.job_id}:${poem.candidate_ordinal}`;
+  if (activeEvaluations.has(key)) return activeEvaluations.get(key);
+  inspect.disabled = true;
+  inspect.textContent = "评分中";
+  failedEvaluations.delete(key);
+  try {
+    const job = await apiFetch(`/v1/poetry/jobs/${encodeURIComponent(poem.job_id)}/state`);
+    const ordinal = Number(poem.candidate_ordinal);
+    const stored = (job.candidates || []).find((candidate) => Number(candidate.ordinal) === ordinal)
+      || job.candidates?.[ordinal]
+      || job.candidates?.[ordinal - 1]
+      || {};
+    const candidate = { ...stored, ordinal, status: "succeeded", content: stored.content || poem.content };
+    if (!candidate.content) throw new Error("找不到这首诗的正文，无法评分");
+    if (candidate.evaluation) {
+      renderPoemScore(scorePanel, inspect, poem, candidate.evaluation);
+      return;
+    }
+    const operation = ensureCandidateEvaluation(job, candidate, { ...(job.request || {}), ...poem }, () => {
+      if (candidate.evaluation) renderPoemScore(scorePanel, inspect, poem, candidate.evaluation);
+      else {
+        inspect.disabled = false;
+        inspect.textContent = "暂无评分，点击重试";
+      }
+    });
+    await operation;
+    if (!operation && completedEvaluations.has(key)) renderPoemScore(scorePanel, inspect, poem, completedEvaluations.get(key));
+  } catch (error) {
+    inspect.disabled = false;
+    inspect.textContent = "暂无评分，点击重试";
+    announce(`评分失败：${error.message}`);
+  }
+}
+
+function renderAvailableScrolls(container, job, requestMeta, { autoEvaluate = true } = {}) {
   const candidates = (job.candidates || []).filter((candidate) => candidate.status === "succeeded" && candidate.content);
   const works = candidates.length
     ? candidates
@@ -2128,6 +2169,8 @@ function renderAvailableScrolls(container, job, requestMeta) {
     const value = {
       ...requestMeta,
       ...work,
+      job_id: job.job_id,
+      candidate_ordinal: ordinal,
       created_at: work.created_at ?? job.created_at ?? requestMeta.created_at,
       content: work.content || work.text || work.full_text || work.display_text || "",
     };
@@ -2146,7 +2189,7 @@ function renderAvailableScrolls(container, job, requestMeta) {
       if (existing) existing.replaceWith(scroll);
       else list.append(scroll);
     }
-    ensureCandidateEvaluation(job, work, requestMeta, () => renderAvailableScrolls(container, job, requestMeta));
+    if (autoEvaluate) ensureCandidateEvaluation(job, work, requestMeta, () => renderAvailableScrolls(container, job, requestMeta));
   });
 }
 
@@ -2175,6 +2218,7 @@ function startJobProgress(jobId, initialJob = null, anchor = null, conversationI
   let timer = null;
   let stopped = false;
   let settled = false;
+  const terminalAtStart = initialJob && !["queued", "running"].includes(initialJob.status);
   const archivedOrdinals = new Set();
   let requestMeta = initialJob?.request || {};
   const render = async (job) => {
@@ -2196,12 +2240,12 @@ function startJobProgress(jobId, initialJob = null, anchor = null, conversationI
       completedOrdinals.forEach((ordinal) => archivedOrdinals.add(ordinal));
       if (hasNewCandidate && currentUser) loadPoems();
     }
-    renderAvailableScrolls(resultsNode, job, requestMeta);
+    renderAvailableScrolls(resultsNode, job, requestMeta, { autoEvaluate: !terminalAtStart });
     if (job.status === "succeeded") {
       activeJobPolls.delete(jobId);
       if (!settled) {
         settled = true;
-        await loadPoems();
+        if (!terminalAtStart) await loadPoems();
       }
       return true;
     }
@@ -2230,26 +2274,6 @@ function startJobProgress(jobId, initialJob = null, anchor = null, conversationI
     stop() { stopped = true; if (timer) window.clearTimeout(timer); },
   });
   poll(initialJob);
-  startJobEventStream(jobId, render);
-}
-
-async function startJobEventStream(jobId, render) {
-  if (!authToken || !window.ReadableStream) return;
-  const controller = new AbortController();
-  try {
-    const response = await fetch(`/v1/poetry/jobs/${encodeURIComponent(jobId)}/events?after=0`, { headers: authHeaders(), signal: controller.signal });
-    if (!response.ok || !response.body) return;
-    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = "";
-    while (true) {
-      const { value, done } = await reader.read(); if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const chunks = buffer.split("\n\n"); buffer = chunks.pop() || "";
-      for (const chunk of chunks) {
-        const line = chunk.split("\n").find((part) => part.startsWith("data:")); if (!line) continue;
-        try { await render(await apiFetch(`/v1/poetry/jobs/${encodeURIComponent(jobId)}/state`)); } catch { /* polling remains the fallback */ }
-      }
-    }
-  } catch { /* SSE 断开后由快照轮询兜底 */ }
 }
 
 chatForm.addEventListener("submit", async (event) => {

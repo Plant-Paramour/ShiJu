@@ -33,6 +33,7 @@ def generate_chunk_candidates(
     count: int,
     temperature: float,
     top_p: float,
+    generator=None,
 ) -> list[Candidate]:
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     prompt_length = inputs.input_ids.shape[1]
@@ -46,6 +47,7 @@ def generate_chunk_candidates(
             temperature=temperature,
             top_p=top_p,
             num_return_sequences=count,
+            generator=generator,
             return_dict_in_generate=True,
             output_scores=True,
             pad_token_id=tokenizer.eos_token_id,
@@ -69,12 +71,87 @@ def generate_chunk_candidates(
     return candidates
 
 
-def main(argv: Sequence[str] | None = None) -> None:
+def run_experiment(args, *, model=None, tokenizer=None) -> None:
+    chunk_lengths = [int(item) for item in args.chunks.split(",") if item.strip()]
+    if not chunk_lengths or any(item <= 0 for item in chunk_lengths):
+        raise SystemExit("--chunks 必须是正整数，例如 2,3 或 2,2,3")
+    if args.batches <= 0 or args.poems_per_batch <= 0:
+        raise SystemExit("--batches 和 --poems-per-batch 必须大于 0")
+
+    tokenizer = tokenizer or AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    model = model or AutoModelForCausalLM.from_pretrained(
+        args.model,
+        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    model.eval()
+    lexicon = Lexicon(args.lexicon)
+    poems: list[dict] = []
+    generator = torch.Generator(device=model.device)
+    generator.manual_seed(args.seed)
+    for batch_index in range(args.batches):
+        for poem_index in range(args.poems_per_batch):
+            context = args.prompt
+            poem_chunks: list[str] = []
+            chunk_results: list[dict] = []
+            for chunk_index, length in enumerate(chunk_lengths):
+                candidates = generate_chunk_candidates(
+                    model,
+                    tokenizer,
+                    context,
+                    length,
+                    count=args.candidates,
+                    temperature=args.temperature,
+                    top_p=args.top_p,
+                    generator=generator,
+                )
+                if not candidates:
+                    raise SystemExit(
+                        f"第 {batch_index + 1} 批第 {poem_index + 1} 首的第 {chunk_index + 1} 个 chunk "
+                        f"没有生成恰好 {length} 字的候选；可提高 --candidates 或降低 --temperature。"
+                    )
+                ranked = [
+                    score(
+                        candidate,
+                        lexicon=lexicon,
+                        reward_enabled=args.lexicon_reward,
+                        reward_weight=args.weight,
+                    )
+                    for candidate in candidates
+                ]
+                ranked.sort(key=lambda item: float(item["total_score"]), reverse=True)
+                best = ranked[0]
+                poem_chunks.append(str(best["chunk"]))
+                context += str(best["chunk"])
+                chunk_results.append({"chunk_index": chunk_index, "candidates": ranked})
+            poem = {
+                "batch": batch_index + 1,
+                "poem": poem_index + 1,
+                "text": "".join(poem_chunks),
+                "chunks": poem_chunks,
+                "lexicon_reward": args.lexicon_reward,
+                "chunk_scores": chunk_results,
+            }
+            poems.append(poem)
+            print(json.dumps(poem, ensure_ascii=False))
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            "\n".join(json.dumps(item, ensure_ascii=False) for item in poems) + "\n",
+            encoding="utf-8",
+        )
+
+
+def main(argv: Sequence[str] | None = None, *, model=None, tokenizer=None) -> None:
     parser = argparse.ArgumentParser(description="Qwen3 固定句读 chunk 评分实验")
     parser.add_argument("--model", default=r"C:\Users\26051\.cache\modelscope\hub\models\Qwen\Qwen3-4B")
     parser.add_argument("--prompt", required=True, help="生成第一个 chunk 前使用的提示词")
     parser.add_argument("--chunks", required=True, help="固定 chunk 字数，例如 2,3 或 2,2,3")
     parser.add_argument("--candidates", type=int, default=8, help="每个 chunk 采样候选数")
+    parser.add_argument("--batches", type=int, default=1, help="生成批次数")
+    parser.add_argument("--poems-per-batch", type=int, default=1, help="每批生成诗数")
+    parser.add_argument("--seed", type=int, default=20260927)
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--lexicon", type=Path, default=Path("shiju/二三字词表.csv"))
@@ -83,59 +160,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--output", type=Path, help="可选：写出 JSONL 结果")
     args = parser.parse_args(argv)
 
-    chunk_lengths = [int(item) for item in args.chunks.split(",") if item.strip()]
-    if not chunk_lengths or any(item <= 0 for item in chunk_lengths):
-        raise SystemExit("--chunks 必须是正整数，例如 2,3 或 2,2,3")
-
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-        device_map="auto",
-        trust_remote_code=True,
-    )
-    model.eval()
-    lexicon = Lexicon(args.lexicon)
-    context = args.prompt
-    all_results: list[dict] = []
-
-    for chunk_index, length in enumerate(chunk_lengths):
-        candidates = generate_chunk_candidates(
-            model,
-            tokenizer,
-            context,
-            length,
-            count=args.candidates,
-            temperature=args.temperature,
-            top_p=args.top_p,
-        )
-        if not candidates:
-            raise SystemExit(
-                f"第 {chunk_index + 1} 个 chunk 没有生成恰好 {length} 字的候选；"
-                "可提高 --candidates 或降低 --temperature。"
-            )
-        ranked = [
-            score(
-                candidate,
-                lexicon=lexicon,
-                reward_enabled=args.lexicon_reward,
-                reward_weight=args.weight,
-            )
-            for candidate in candidates
-        ]
-        ranked.sort(key=lambda item: float(item["total_score"]), reverse=True)
-        best = ranked[0]
-        all_results.append({"chunk_index": chunk_index, "candidates": ranked})
-        context += str(best["chunk"])
-        print(json.dumps(all_results[-1], ensure_ascii=False))
-
-    print(json.dumps({"text": context, "lexicon_reward": args.lexicon_reward}, ensure_ascii=False))
-    if args.output:
-        args.output.write_text(
-            "\n".join(json.dumps(item, ensure_ascii=False) for item in all_results)
-            + "\n",
-            encoding="utf-8",
-        )
+    run_experiment(args, model=model, tokenizer=tokenizer)
 
 
 if __name__ == "__main__":

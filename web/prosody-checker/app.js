@@ -448,9 +448,7 @@ elements.variant.addEventListener("change", renderTemplate);
 elements.form.addEventListener("submit", runCheck);
 
 try {
-  await loadMeterCatalog();
   updateTypeView();
-  getLexicon(elements.rhymeBook.value);
 } catch (error) {
   elements.status.textContent = error instanceof Error ? error.message : "初始化失败";
 }
