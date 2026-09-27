@@ -1340,7 +1340,16 @@ window.addEventListener("storage", (event) => {
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && authToken) loadCurrentUser({ restore: false });
+  if (!document.hidden && authToken) {
+    loadCurrentUser({ restore: false });
+    if (currentConversationId && !activeChatRequest) refreshConversationMessages(currentConversationId);
+  }
+});
+
+window.addEventListener("focus", () => {
+  if (!document.hidden && authToken && currentConversationId && !activeChatRequest) {
+    refreshConversationMessages(currentConversationId);
+  }
 });
 
 function appendMessage(text, role, state = "", meta = {}) {

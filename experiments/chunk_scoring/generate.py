@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import replace
 from pathlib import Path
+from typing import Sequence
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from scorer import Candidate, Lexicon, score
+try:
+    from .scorer import Candidate, Lexicon, score
+except ImportError:  # 允许直接执行 python experiments/chunk_scoring/generate.py
+    from scorer import Candidate, Lexicon, score
 
 
 def _text_only(tokenizer, token_ids: list[int]) -> str:
@@ -66,7 +69,7 @@ def generate_chunk_candidates(
     return candidates
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Qwen3 固定句读 chunk 评分实验")
     parser.add_argument("--model", default=r"C:\Users\26051\.cache\modelscope\hub\models\Qwen\Qwen3-4B")
     parser.add_argument("--prompt", required=True, help="生成第一个 chunk 前使用的提示词")
@@ -78,7 +81,7 @@ def main() -> None:
     parser.add_argument("--lexicon-reward", action="store_true")
     parser.add_argument("--lambda", dest="weight", type=float, default=0.1)
     parser.add_argument("--output", type=Path, help="可选：写出 JSONL 结果")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     chunk_lengths = [int(item) for item in args.chunks.split(",") if item.strip()]
     if not chunk_lengths or any(item <= 0 for item in chunk_lengths):
