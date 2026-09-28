@@ -76,12 +76,12 @@ class EventRepository:
         if not branch_id:
             return None
         with self.database.connect() as connection:
-            row = connection.execute("SELECT * FROM agent_turns WHERE branch_id=? AND status IN ('running','pausing','resuming') AND id<>? ORDER BY created_at DESC LIMIT 1", (branch_id, exclude_turn_id or "")).fetchone()
+            row = connection.execute("SELECT * FROM agent_turns WHERE branch_id=? AND status IN ('queued','running','pausing','resuming','cancelling') AND id<>? ORDER BY created_at DESC LIMIT 1", (branch_id, exclude_turn_id or "")).fetchone()
         return dict(row) if row else None
 
     def interrupt_unfinished_turns(self) -> int:
         with self.database.connect() as connection:
-            updated = connection.execute("UPDATE agent_turns SET status='interrupted',updated_at=? WHERE status IN ('running','pausing','resuming')", (self._clock(),))
+            updated = connection.execute("UPDATE agent_turns SET status='interrupted',updated_at=? WHERE status IN ('running','pausing','resuming','cancelling') AND id NOT IN (SELECT agent_turn_id FROM jobs WHERE agent_turn_id IS NOT NULL AND status IN ('queued','running'))", (self._clock(),))
             connection.execute("UPDATE messages SET status='interrupted',updated_at=? WHERE turn_id IN (SELECT id FROM agent_turns WHERE status='interrupted') AND status IN ('pending','paused')", (self._clock(),))
         return updated.rowcount
 
@@ -90,6 +90,14 @@ class EventRepository:
             rows = connection.execute(
                 "SELECT e.*, t.conversation_id FROM agent_events e JOIN agent_turns t ON t.id=e.turn_id WHERE t.conversation_id=? AND e.seq>? ORDER BY e.created_at,e.id LIMIT ?",
                 (conversation_id, after, limit),
+            ).fetchall()
+        return [self._event(row) for row in rows]
+
+    def list_turn_events(self, turn_id: str, *, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM agent_events WHERE turn_id=? AND seq>? ORDER BY seq LIMIT ?",
+                (turn_id, after, limit),
             ).fetchall()
         return [self._event(row) for row in rows]
 

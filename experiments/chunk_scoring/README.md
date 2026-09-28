@@ -1,6 +1,6 @@
 # Chunk 评分实验
 
-这个目录是独立实验，不修改 `shiju/` 的生产生成链路。
+这个目录是独立实验，不修改 `shiju/` 的生产生成链路。默认后端复用 `shiju` 的诗体状态机、韵书、平仄/押韵约束和 logits processor。
 
 实验目标：在同一个固定句读边界上，对候选 chunk 比较两种排序：
 
@@ -46,4 +46,18 @@ python experiments/chunk_scoring/generate.py `
   --lambda 0.1
 ```
 
-`--model` 默认就是本机的 Qwen3-4B 缓存路径。脚本会在每个固定 chunk 边界筛选恰好对应字数的候选，输出每个候选的模型分数、词表奖励和总分。当前实验按每个 chunk 选择最高分候选，尚未接入生产格律状态机、平仄或押韵约束。
+`--model` 默认就是本机的 Qwen3-4B 缓存路径。脚本会在每个固定 chunk 边界筛选恰好对应字数、且通过 `shiju` 格律约束的候选，输出模型分数。默认不启用词表奖励。
+
+七言绝句示例（平水韵文件名为 `Pinshui.json`）：
+
+```powershell
+python experiments/chunk_scoring/generate.py `
+  --prompt "请创作一句写秋夜江面的古典诗句，只输出诗句正文。" `
+  --chunks 2,2,3 `
+  --meter-type 唐诗 `
+  --form-name 七言绝句 `
+  --rhyme-dict Pinshui `
+  --candidates 8
+```
+
+`--constraint-backend legacy` 可运行旧的仅字数边界实验，用于对照。

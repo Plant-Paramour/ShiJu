@@ -42,8 +42,10 @@ class _EndpointState:
     semaphore: threading.BoundedSemaphore | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
 
+    recovery_probe_in_flight: bool = False
+
     def available(self, now: float, needs_stream: bool) -> bool:
-        return (self.config.supports_stream if needs_stream else self.config.supports_tools) and now >= self.cooldown_until and self.active < self.config.max_concurrency
+        return (self.config.supports_stream if needs_stream else self.config.supports_tools) and self.active < self.config.max_concurrency
 
 
 class _RoutedModel(ChatModel):
@@ -161,17 +163,37 @@ class ModelGateway(ChatModel):
     def _select(self, attempted: set[int], *, needs_stream: bool, preferred_model: str | None = None) -> _EndpointState | None:
         now = self._clock()
         tiers = {"primary": 0, "secondary": 1, "emergency": 2}
-        candidates = [s for s in self._states if id(s) not in attempted and s.available(now, needs_stream) and (preferred_model is None or s.config.model == preferred_model)]
+        candidates = []
+        reserved: list[_EndpointState] = []
+        for state in self._states:
+            if id(state) in attempted or (preferred_model is not None and state.config.model != preferred_model):
+                continue
+            with state.lock:
+                if not state.available(now, needs_stream) or now < state.cooldown_until:
+                    continue
+                if state.cooldown_until > 0:
+                    if state.recovery_probe_in_flight:
+                        continue
+                    state.recovery_probe_in_flight = True
+                    reserved.append(state)
+                candidates.append(state)
         if not candidates:
             return None
         candidates.sort(key=lambda s: (tiers.get(s.config.tier, 9), s.config.priority, -s.config.weight))
         top = [s for s in candidates if (s.config.tier, s.config.priority) == (candidates[0].config.tier, candidates[0].config.priority)]
         weights = [max(1, item.config.weight) for item in top]
-        return random.choices(top, weights=weights, k=1)[0]
+        selected = random.choices(top, weights=weights, k=1)[0]
+        for state in reserved:
+            if state is not selected:
+                with state.lock:
+                    state.recovery_probe_in_flight = False
+        return selected
 
     def _invoke(self, state: _EndpointState, method: str, messages, tools):
         key = os.getenv(state.config.secret_ref, "")
         if not key:
+            with state.lock:
+                state.recovery_probe_in_flight = False
             raise ChatModelError(f"端点 {state.config.provider_id} 的密钥未配置")
         model = OpenAICompatibleChatModel(base_url=state.config.base_url, api_key=key, model=state.config.model, timeout_seconds=state.config.timeout_seconds)
         started = self._clock()
@@ -193,11 +215,14 @@ class ModelGateway(ChatModel):
                         with state.lock:
                             state.successes += 1
                             state.failures = 0
+                            state.cooldown_until = 0.0
+                            state.recovery_probe_in_flight = False
                             state.latency_ms.append((self._clock() - started) * 1000)
                     except Exception as exc:
                         with state.lock:
                             state.failures += 1
                             self._apply_cooldown(state, exc)
+                            state.recovery_probe_in_flight = False
                         if emitted:
                             raise ChatModelError("模型流式响应已开始后中断") from exc
                         raise
@@ -212,6 +237,8 @@ class ModelGateway(ChatModel):
             with state.lock:
                 state.successes += 1
                 state.failures = 0
+                state.cooldown_until = 0.0
+                state.recovery_probe_in_flight = False
                 state.latency_ms.append((self._clock() - started) * 1000)
             return result
         except Exception as exc:
@@ -220,6 +247,7 @@ class ModelGateway(ChatModel):
                 if getattr(exc, "status_code", None) in {401, 403}:
                     state.cooldown_until = self._clock() + 3600
                 self._apply_cooldown(state, exc)
+                state.recovery_probe_in_flight = False
             raise
         finally:
             if not transferred:
@@ -261,5 +289,6 @@ class ModelGateway(ChatModel):
                     "latency_ms": list(state.latency_ms)[-20:],
                     "last_status_code": state.last_status_code,
                     "cooldown_until": state.cooldown_until,
+                    "recovery_probe_in_flight": state.recovery_probe_in_flight,
                 })
         return snapshots

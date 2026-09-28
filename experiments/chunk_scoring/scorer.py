@@ -11,6 +11,7 @@ class Candidate:
     chunk: str
     model_logprob: float
     token_count: int | None = None
+    token_ids: tuple[int, ...] = ()
 
 
 class Lexicon:
@@ -63,4 +64,6 @@ def score(
         "model_score": model_score,
         "lexicon_bonus": lexicon_bonus,
         "total_score": total,
+        "token_count": candidate.token_count,
+        "token_ids": list(candidate.token_ids),
     }

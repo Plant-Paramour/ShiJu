@@ -83,6 +83,7 @@ class JobRepository:
         max_attempts: int = 2,
         user_id: str | None = None,
         conversation_id: str | None = None,
+        agent_turn_id: str | None = None,
     ) -> JobRecord:
         canonical = json.dumps(request, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         request_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -103,8 +104,9 @@ class JobRepository:
                 """
                 INSERT INTO jobs(
                     id, kind, status, request_json, request_hash, idempotency_key,
-                    attempts, max_attempts, created_at, updated_at, user_id, conversation_id
-                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+                    attempts, max_attempts, created_at, updated_at, user_id, conversation_id,
+                    agent_turn_id
+                ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     job_id,
@@ -118,6 +120,7 @@ class JobRepository:
                     now,
                     user_id,
                     conversation_id,
+                    agent_turn_id,
                 ),
             )
             candidate_count = int(request.get("candidate_count", 0) or 0)
@@ -208,15 +211,20 @@ class JobRepository:
         capabilities: Mapping[str, Any],
         *,
         lease_seconds: int = 300,
+        kinds: tuple[str, ...] | None = None,
     ) -> JobRecord | None:
         now = self._clock()
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._touch_worker(connection, worker_id, capabilities, now)
             self._recover_expired(connection, now)
+            allowed_kinds = kinds or ("generate", "rewrite", "partial_generate")
+            placeholders = ",".join("?" for _ in allowed_kinds)
+            lock_clause = " FOR UPDATE SKIP LOCKED" if self.database.is_postgres else ""
             row = connection.execute(
-                "SELECT * FROM jobs WHERE status = ? ORDER BY created_at LIMIT 1",
-                (JobStatus.QUEUED.value,),
+                f"SELECT * FROM jobs WHERE status = ? AND kind IN ({placeholders}) "
+                f"ORDER BY created_at LIMIT 1{lock_clause}",
+                (JobStatus.QUEUED.value, *allowed_kinds),
             ).fetchone()
             if row is None:
                 return None
@@ -252,9 +260,9 @@ class JobRepository:
                 """,
                 (now + lease_seconds, now, job_id, worker_id, JobStatus.RUNNING.value),
             )
-        if result.rowcount != 1:
-            raise JobOwnershipError(job_id)
-        with self.database.connect() as connection:
+            if result.rowcount != 1:
+                raise JobOwnershipError(job_id)
+            connection.execute("UPDATE workers SET last_seen_at=? WHERE id=?", (now, worker_id))
             row = connection.execute(
                 "SELECT cancel_requested FROM jobs WHERE id=? AND worker_id=? AND status=?",
                 (job_id, worker_id, JobStatus.RUNNING.value),
@@ -300,7 +308,7 @@ class JobRepository:
         if updated.rowcount != 1:
             raise JobOwnershipError(job_id)
         row = self.get(job_id)
-        if row.user_id:
+        if row.user_id and row.kind != "agent_turn":
             from .user_repository import UserRepository
 
             UserRepository(self.database).save_poem(row.user_id, job_id, row.request, dict(result))
@@ -440,6 +448,22 @@ class JobRepository:
                 "SELECT 1 FROM workers WHERE last_seen_at >= ? LIMIT 1", (threshold,)
             ).fetchone()
         return row is not None
+
+    def get_agent_turn_job(self, turn_id: str) -> JobRecord | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM jobs WHERE agent_turn_id=? ORDER BY created_at DESC LIMIT 1",
+                (turn_id,),
+            ).fetchone()
+        return self._record(row) if row else None
+
+    def get_by_idempotency_key(self, key: str) -> JobRecord | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM jobs WHERE idempotency_key=?",
+                (key,),
+            ).fetchone()
+        return self._record(row) if row else None
 
     @staticmethod
     def _touch_worker(connection, worker_id, capabilities, now) -> None:

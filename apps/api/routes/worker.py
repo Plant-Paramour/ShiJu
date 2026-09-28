@@ -37,6 +37,7 @@ async def claim_job(
             body.worker_id,
             body.capabilities,
             lease_seconds=request.app.state.settings.worker_lease_seconds,
+            kinds=tuple(body.job_kinds) if body.job_kinds else None,
         )
         if job is not None:
             return job.to_dict(include_request=True)

@@ -36,6 +36,7 @@ dev = [
 
 [project.scripts]
 shiju-agent = "apps.agent.main:main"
+shiju-agent-executor = "apps.agent.executor:main"
 shiju-api = "apps.api.main:main"
 shiju-gpu-worker = "apps.gpu_worker.main:main"
 

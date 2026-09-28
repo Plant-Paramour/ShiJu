@@ -1,0 +1,122 @@
+{
+  "model": "C:\\Users\\26051\\.cache\\modelscope\\hub\\models\\Qwen\\Qwen3-4B",
+  "quantization": "8bit",
+  "seed": 20260928,
+  "repeats": 3,
+  "request": {
+    "meter_type": "唐诗",
+    "form_name": "七言绝句",
+    "theme": "秋江晚景",
+    "variant_name": null,
+    "rhyme_dict_name": "Pinshui",
+    "requirement": "意境清远，语言自然。",
+    "task_type": "instruction",
+    "use_thinking": false,
+    "cipai_data_path": "PoeTone-main/data/cipai_data.json",
+    "num_lines": null,
+    "strict_polyphonic": false,
+    "candidate_count": 1,
+    "task_options": {},
+    "rhyme_mode": "auto",
+    "rhyme_parts": {},
+    "fixed_lines": {},
+    "sampling": {
+      "max_new_tokens": 128,
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0
+    }
+  },
+  "runs": [
+    {
+      "run": 1,
+      "seed": 20260928,
+      "elapsed_seconds": 89.2650706999998,
+      "stages": {
+        "tokenizer_decode_seconds": 7.917710100004115,
+        "tokenizer_decode_calls": 233897,
+        "processor_seconds": 59.07757909999964,
+        "processor_seconds_calls": 49,
+        "resolve_patterns_seconds": 0.04077250000091226,
+        "resolve_patterns_seconds_calls": 28,
+        "tensor_mask_seconds": 0.008418700001129764,
+        "tensor_mask_seconds_calls": 33,
+        "tang_policy_seconds": 21.936832000061713,
+        "tang_policy_seconds_calls": 233798,
+        "policy_tier_seconds": 23.171887100046206,
+        "policy_tier_seconds_calls": 233798
+      },
+      "text": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。",
+      "raw_output": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。"
+    },
+    {
+      "run": 2,
+      "seed": 20260928,
+      "elapsed_seconds": 102.11446729999989,
+      "stages": {
+        "tokenizer_decode_seconds": 9.499093499937317,
+        "tokenizer_decode_calls": 233897,
+        "processor_seconds": 68.99695579999934,
+        "processor_seconds_calls": 49,
+        "resolve_patterns_seconds": 0.04573799999934636,
+        "resolve_patterns_seconds_calls": 28,
+        "tensor_mask_seconds": 0.010815199999797187,
+        "tensor_mask_seconds_calls": 33,
+        "tang_policy_seconds": 26.274122100072418,
+        "tang_policy_seconds_calls": 233798,
+        "policy_tier_seconds": 27.763350000054288,
+        "policy_tier_seconds_calls": 233798
+      },
+      "text": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。",
+      "raw_output": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。"
+    },
+    {
+      "run": 3,
+      "seed": 20260928,
+      "elapsed_seconds": 103.81549989999985,
+      "stages": {
+        "tokenizer_decode_seconds": 9.54774469995391,
+        "tokenizer_decode_calls": 233897,
+        "processor_seconds": 69.7154309999978,
+        "processor_seconds_calls": 49,
+        "resolve_patterns_seconds": 0.046716799999558134,
+        "resolve_patterns_seconds_calls": 28,
+        "tensor_mask_seconds": 0.009894399999666348,
+        "tensor_mask_seconds_calls": 33,
+        "tang_policy_seconds": 26.37669080005344,
+        "tang_policy_seconds_calls": 233798,
+        "policy_tier_seconds": 27.87583870004255,
+        "policy_tier_seconds_calls": 233798
+      },
+      "text": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。",
+      "raw_output": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。"
+    }
+  ],
+  "stage_means": {
+    "tokenizer_decode_seconds": {
+      "mean_seconds": 8.98818276663178,
+      "share_of_end_to_end": 0.09134485624053704
+    },
+    "processor_seconds": {
+      "mean_seconds": 65.92998863333226,
+      "share_of_end_to_end": 0.6700314724362008
+    },
+    "resolve_patterns_seconds": {
+      "mean_seconds": 0.04440909999993892,
+      "share_of_end_to_end": 0.00045131957822729026
+    },
+    "tensor_mask_seconds": {
+      "mean_seconds": 0.0097094333335311,
+      "share_of_end_to_end": 9.867476163491888e-05
+    },
+    "tang_policy_seconds": {
+      "mean_seconds": 24.862548300062524,
+      "share_of_end_to_end": 0.2526724210230625
+    },
+    "policy_tier_seconds": {
+      "mean_seconds": 26.270358600047683,
+      "share_of_end_to_end": 0.26697967676150824
+    }
+  }
+}

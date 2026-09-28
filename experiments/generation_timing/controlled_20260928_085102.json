@@ -1,0 +1,95 @@
+{
+  "model": "C:\\Users\\26051\\.cache\\modelscope\\hub\\models\\Qwen\\Qwen3-4B",
+  "quantization": "8bit",
+  "seed": 20260928,
+  "repeats": 3,
+  "request": {
+    "meter_type": "唐诗",
+    "form_name": "七言绝句",
+    "theme": "秋江晚景",
+    "variant_name": null,
+    "rhyme_dict_name": "Pinshui",
+    "requirement": "意境清远，语言自然。",
+    "task_type": "instruction",
+    "use_thinking": false,
+    "cipai_data_path": "PoeTone-main/data/cipai_data.json",
+    "num_lines": null,
+    "strict_polyphonic": false,
+    "candidate_count": 1,
+    "task_options": {},
+    "rhyme_mode": "auto",
+    "rhyme_parts": {},
+    "fixed_lines": {},
+    "sampling": {
+      "max_new_tokens": 128,
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "top_k": 20,
+      "min_p": 0.0
+    }
+  },
+  "groups": {
+    "with_constraints": {
+      "use_constraints": true,
+      "warmup_seconds": 118.75218880000011,
+      "mean_seconds": 83.73132150000008,
+      "min_seconds": 57.359615400000166,
+      "max_seconds": 97.30773910000016,
+      "std_seconds": 22.84190672068109,
+      "runs": [
+        {
+          "run": 1,
+          "seed": 20260928,
+          "elapsed_seconds": 96.52660999999989,
+          "text": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。",
+          "raw_output": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。"
+        },
+        {
+          "run": 2,
+          "seed": 20260928,
+          "elapsed_seconds": 57.359615400000166,
+          "text": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。",
+          "raw_output": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。"
+        },
+        {
+          "run": 3,
+          "seed": 20260928,
+          "elapsed_seconds": 97.30773910000016,
+          "text": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。",
+          "raw_output": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随风知水阔，半江残月照人情。"
+        }
+      ]
+    },
+    "without_constraints": {
+      "use_constraints": false,
+      "warmup_seconds": 32.00533180000002,
+      "mean_seconds": 33.430680933333406,
+      "min_seconds": 32.83775349999996,
+      "max_seconds": 33.91209560000016,
+      "std_seconds": 0.5457829786695918,
+      "runs": [
+        {
+          "run": 1,
+          "seed": 20260928,
+          "elapsed_seconds": 32.83775349999996,
+          "text": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随波浮落处，寒沙细碎月华明。",
+          "raw_output": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随波浮落处，寒沙细碎月华明。"
+        },
+        {
+          "run": 2,
+          "seed": 20260928,
+          "elapsed_seconds": 33.5421937000001,
+          "text": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随波浮落处，寒沙细碎月华明。",
+          "raw_output": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随波浮落处，寒沙细碎月华明。"
+        },
+        {
+          "run": 3,
+          "seed": 20260928,
+          "elapsed_seconds": 33.91209560000016,
+          "text": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随波浮落处，寒沙细碎月华明。",
+          "raw_output": "[title]七言绝句·秋江晚景\n[content]烟波远映孤帆影，暮色微侵白鹭声。一叶随波浮落处，寒沙细碎月华明。"
+        }
+      ]
+    }
+  }
+}

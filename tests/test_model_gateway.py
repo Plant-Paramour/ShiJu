@@ -52,6 +52,66 @@ def test_gateway_records_rate_limit_and_cools_endpoint(monkeypatch):
         gateway.complete([], [])
 
 
+def test_gateway_half_open_probe_recovers_after_cooldown(monkeypatch):
+    calls = 0
+
+    class Recovers(FakeModel):
+        def complete(self, messages, tools):
+            nonlocal calls
+            calls += 1
+            if calls <= 3:
+                raise JsonTransportError("upstream unavailable", status_code=503)
+            return {"role": "assistant", "content": "recovered"}
+
+    monkeypatch.setattr("apps.agent.gateway.OpenAICompatibleChatModel", Recovers)
+    os.environ["GW_RECOVER"] = "key"
+    now = [100.0]
+    gateway = ModelGateway(
+        [EndpointConfig("recover", "https://recover", "m", "GW_RECOVER")],
+        max_attempts=1,
+        clock=lambda: now[0],
+    )
+    for _ in range(3):
+        with pytest.raises(Exception):
+            gateway.complete([], [])
+    assert gateway.status()[0]["cooldown_until"] == 130.0
+    now[0] = 129.0
+    with pytest.raises(Exception, match="无可用端点"):
+        gateway.complete([], [])
+    assert calls == 3
+    now[0] = 130.0
+    assert gateway.complete([], []) == {"role": "assistant", "content": "recovered"}
+    state = gateway.status()[0]
+    assert state["cooldown_until"] == 0.0
+    assert state["failures"] == 0
+    assert state["successes"] == 1
+    assert state["recovery_probe_in_flight"] is False
+
+
+def test_gateway_allows_only_one_half_open_probe(monkeypatch):
+    class AlwaysUnavailable(FakeModel):
+        def complete(self, messages, tools):
+            raise JsonTransportError("upstream unavailable", status_code=503)
+
+    monkeypatch.setattr("apps.agent.gateway.OpenAICompatibleChatModel", AlwaysUnavailable)
+    os.environ["GW_PROBE"] = "key"
+    now = [100.0]
+    gateway = ModelGateway(
+        [EndpointConfig("probe", "https://probe", "m", "GW_PROBE")],
+        max_attempts=1,
+        clock=lambda: now[0],
+    )
+    for _ in range(3):
+        with pytest.raises(Exception):
+            gateway.complete([], [])
+    now[0] = 130.0
+    first = gateway._select(set(), needs_stream=False)
+    second = gateway._select(set(), needs_stream=False)
+    assert first is not None
+    assert second is None
+    assert gateway.status()[0]["recovery_probe_in_flight"] is True
+
+
 def test_gateway_does_not_retry_client_error(monkeypatch):
     class ClientError(FakeModel):
         def complete(self, messages, tools):

@@ -303,6 +303,7 @@ class WorkerClaimModel(BaseModel):
     worker_id: str
     capabilities: dict[str, Any] = Field(default_factory=dict)
     wait_seconds: int = Field(default=15, ge=0, le=20)
+    job_kinds: list[str] | None = None
 
 
 class WorkerIdentityModel(BaseModel):

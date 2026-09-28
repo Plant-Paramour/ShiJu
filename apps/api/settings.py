@@ -18,6 +18,7 @@ class ApiSettings:
     agent_global_concurrency: int = 32
     agent_user_concurrency: int = 2
     agent_daily_quota: int = 200
+    agent_turn_timeout_seconds: int = 900
 
     @classmethod
     def from_env(cls) -> "ApiSettings":
@@ -41,4 +42,5 @@ class ApiSettings:
             agent_global_concurrency=int(os.getenv("SHIJU_AGENT_GLOBAL_CONCURRENCY", "32")),
             agent_user_concurrency=int(os.getenv("SHIJU_AGENT_USER_CONCURRENCY", "2")),
             agent_daily_quota=int(os.getenv("SHIJU_AGENT_DAILY_QUOTA", "200")),
+            agent_turn_timeout_seconds=int(os.getenv("SHIJU_AGENT_TURN_TIMEOUT_SECONDS", "900")),
         )

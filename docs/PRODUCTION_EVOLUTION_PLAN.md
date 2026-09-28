@@ -335,3 +335,82 @@ T4 按需 GPU Worker
 
 如果 12M 明显增加成本，5M 也可以先上线，前提是静态资源、图片和附件不依赖应用服务器直出。相比从 5M 升级到 12M，更应该优先保证数据库备份、连接稳定性、模型兜底额度和 Agent 限流机制。
 
+## 11. 当前进度（2026-09-27）
+
+### 阶段一：生产基础
+
+代码准备基本完成，真实部署尚未验收。当前已有 PostgreSQL 适配、SQLite 迁移工具、数据库备份工具、生产配置校验、鉴权、Agent 限流、健康检查和独立 GPU Worker。仍需在实际服务器上完成 PostgreSQL 迁移、自动备份、HTTPS、反向代理和日志轮转。
+
+### 阶段二：模型网关
+
+已完成并通过验证：
+
+- 多个 URL、Key、Model 端点的 TOML 配置和环境变量密钥引用；
+- `primary`、`secondary` 端点分层、优先级、权重和并发上限；
+- tools/stream 能力声明和配置校验；
+- 超时、错误分类、有限重试、冷却和端点状态记录；
+- 普通响应、流式响应和真实工具调用；
+- 两个真实可用模型：`deepseek-v3.2-guiji-cc`、`Qwen/Qwen3.5-9B`；
+- 主端点故障后切换到备用端点；
+- 12 个并发最小请求，成功 12 个，未出现失败或 429；
+- `tests/test_model_gateway.py` 和 `tests/test_local_production_tools.py` 共 14 项测试通过。
+
+未形成生产验收证据的项目：
+
+- 真实供应商 429、5xx 和限流故障演练；
+- 长时间运行下的端点成功率、P95 延迟和费用统计；
+- 多 API 进程或多实例之间共享熔断、限流状态；
+- 真实 emergency 兜底端点及其可用额度。
+
+当前已知端点情况：`deepseek-v4.1-flash-cc` 测试时超时，`Qwen/Qwen3.6-27B` 返回 503，暂不作为已验证模型使用。
+
+## 12. 后续阶段展开
+
+### 阶段三：可靠性
+
+按以下顺序推进：
+
+1. 为 Agent 请求补充统一的排队、取消、超时和幂等状态机；
+2. 增加端点恢复探测，并区分认证错误、限流错误、兼容性错误和上游故障；
+3. 配置并验证真实 emergency 端点，明确工具调用和普通聊天的降级边界；
+4. 增加结构化调用日志和指标，至少记录端点、模型、耗时、状态码、重试次数和失败原因；
+5. 用多进程运行 API，验证会话、事件、任务和限流行为不依赖单一进程内存；
+6. 对生成任务和工具调用补充重复提交、取消后重试和 Worker 重启场景的幂等测试。
+
+阶段三完成条件：故障切换、取消、超时、恢复和幂等场景均有自动化测试，并完成一次脱敏真实流量演练。
+
+本地实现进展（2026-09-27）：任务持久化、API/executor 分离、跨进程限流状态、取消/超时/lease 恢复，以及模型网关冷却后的恢复探测已完成本地实现。真实 emergency 端点、脱敏生产流量演练和长期运行指标仍未验收，因此阶段三尚未达到完整生产验收条件。具体本地测试结果见第 13 节。
+
+### 阶段四：按压测结果扩展
+
+1. 建立固定的 API、Agent、SSE 和 GPU 任务压测脚本；
+2. 记录 P50/P95/P99、连接池等待、锁等待、端点 429、任务排队和资源峰值；
+3. 根据指标决定数据库连接池、API Worker、GPU 实例和端点池的扩容；
+4. 只有在 SSE 或共享限流/熔断状态成为瓶颈时引入 Redis；
+5. 将压测结果和扩容决策记录到版本化文档中。
+
+阶段四完成条件：压测数据可重复，容量上限和扩容触发条件明确，并完成一次上线前回归压测。
+
+## 13. 阶段三本地验证记录（2026-09-27）
+
+### 已实现并验证
+
+- Agent turn 持久化到现有 PostgreSQL job/event 仓储；复用幂等键、worker lease、心跳和过期任务重新领取机制。GPU worker 默认只领取生成任务，Agent executor 单独领取 Agent turn。
+- Agent API 负责排队和 SSE 事件读取，独立 executor 进程负责执行；取消、完成、失败状态和终结事件写入持久化仓储。
+- 限流计数由数据库共享，覆盖 API 与 executor 分进程后的并发和每日额度约束。
+- 模型网关通过模拟服务验证失败冷却、冷却后恢复探测、探测失败继续冷却和备用模型切换。
+- 集成测试使用独立本地 PostgreSQL 数据库 `shiju_stage3_test`；不连接或迁移旧 SQLite 数据。
+
+### 测试结果
+
+- 阶段三及相关回归测试：本次运行 34 项通过，覆盖本地任务状态机、PostgreSQL 幂等/lease/心跳/重启恢复、跨进程限流、API/executor 分离、SSE 与模型网关故障恢复。
+- PostgreSQL 集成测试命令：`python -m pytest -q tests/test_stage3_postgres.py`；运行前须将 `SHIJU_STAGE3_DATABASE_URL` 指向本机专用 `shiju_stage3_test` 数据库。测试会检查数据库名并清理自身创建的测试记录。
+- 本次完整回归命令：`python -m pytest -q tests/test_stage3_local.py tests/test_stage3_postgres.py tests/test_api_integration.py tests/test_model_gateway.py tests/test_rate_limit.py tests/test_local_production_tools.py`。
+- 全量测试 `python -m pytest -xq` 在既有测试 `tests/test_agent_tools.py::test_rhyme_and_meter_queries_use_local_data` 失败：韵谱 pattern 的断言期望包含分隔符，而现有返回值不含；该问题与阶段三改动无关，需单独修复或确认测试预期。
+
+### 尚待部署环境验收
+
+- 在目标部署环境验证 PostgreSQL 迁移、备份恢复、进程管理、HTTPS/反向代理和日志轮转。
+- 使用真实 emergency 服务验证可用额度和普通聊天/工具调用的降级边界。
+- 执行脱敏真实流量演练，并收集长时间运行的成功率、P95 延迟、费用、队列积压和资源指标。
+- 全量测试中的既有韵谱断言失败尚未处理；阶段三专项通过不代表整个仓库回归全部通过。

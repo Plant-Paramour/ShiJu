@@ -53,6 +53,7 @@ def create_app(settings: ApiSettings | None = None, *, agent_service=None):
         global_concurrency=active.agent_global_concurrency,
         user_concurrency=active.agent_user_concurrency,
         daily_quota=active.agent_daily_quota,
+        database=database,
     )
     app.state.jobs = JobRepository(database)
     app.state.users = users
